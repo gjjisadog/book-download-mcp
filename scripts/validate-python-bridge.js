@@ -21,6 +21,7 @@ const projectRoot = resolve(__dirname, '..');
 // Required Python bridge files
 const requiredPythonFiles = [
   { path: 'lib/python_bridge.py', critical: true, description: 'Main Python bridge script' },
+  { path: 'lib/account_pool.py', critical: true, description: 'Z-Library account pool' },
   { path: 'lib/rag_processing.py', critical: true, description: 'RAG document processing' },
   { path: 'lib/enhanced_metadata.py', critical: true, description: 'Enhanced metadata extraction' },
   { path: 'lib/author_tools.py', critical: false, description: 'Author-specific search tools' },

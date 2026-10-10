@@ -12,7 +12,7 @@ project_root = os.path.dirname(
 sys.path.insert(0, project_root)
 sys.path.insert(0, os.path.join(project_root, "zlibrary", "src"))
 
-from zlibrary.eapi import EAPIClient  # noqa: E402
+from zlibrary.eapi import DownloadLimitError, EAPIClient  # noqa: E402
 
 pytestmark = pytest.mark.unit
 
@@ -35,6 +35,26 @@ def tmp_download_dir(tmp_path):
 
 class TestDownloadFile:
     """Tests for EAPIClient.download_file."""
+
+    @pytest.mark.parametrize("response", [
+        {"success": 0, "error": "Daily download limit reached"},
+        {"success": 0, "error": {"message": "Download quota exhausted"}},
+        {"success": 0, "user": {"downloads_today_left": 0}},
+    ])
+    async def test_quota_error_is_typed_before_any_write(self, eapi_client, tmp_download_dir, response):
+        eapi_client.get_download_link = AsyncMock(return_value=response)
+        with pytest.raises(DownloadLimitError, match="quota exhausted"):
+            await eapi_client.download_file(123, "hash", tmp_download_dir)
+        assert not os.path.exists(tmp_download_dir)
+
+    async def test_unrelated_missing_link_does_not_trigger_account_switch(self, eapi_client, tmp_download_dir):
+        eapi_client.get_download_link = AsyncMock(return_value={
+            "success": 0, "error": "Book not found", "title": "Daily Download Limit"
+        })
+        with pytest.raises(RuntimeError) as error:
+            await eapi_client.download_file(123, "hash", tmp_download_dir)
+        assert not isinstance(error.value, DownloadLimitError)
+        assert not os.path.exists(tmp_download_dir)
 
     @pytest.mark.asyncio
     async def test_download_file_success(self, eapi_client, tmp_download_dir):

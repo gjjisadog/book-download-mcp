@@ -3,6 +3,7 @@ import sys
 import os
 import json
 import traceback
+import httpx
 
 # Add project root to sys.path to allow importing 'lib'
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,6 +24,7 @@ from lib import enhanced_metadata
 # Import multi-source router
 from lib.sources.router import SourceRouter
 from lib.sources.config import get_source_config
+from lib.account_pool import Account, AccountAuthenticationError, AccountPool, load_accounts
 
 # Add zlibrary source directory to path for EAPI imports
 zlibrary_src_path = os.path.join(os.path.dirname(__file__), "..", "zlibrary", "src")
@@ -34,12 +36,15 @@ from zlibrary.eapi import (
     normalize_eapi_search_response,
     resolve_eapi_domain,
     select_advertised_domain,
+    DownloadLimitError,
 )
 
 logger = logging.getLogger("zlibrary")  # Get the 'zlibrary' logger instance
 
 # Module-level EAPI client (created after login)
 _eapi_client: EAPIClient = None
+_account_pool = None
+_account_client_factory = None
 
 # Module-level source router (for multi-source search)
 _source_router: SourceRouter = None
@@ -210,7 +215,7 @@ async def get_eapi_client() -> EAPIClient:
     return _eapi_client
 
 
-async def initialize_eapi_client() -> EAPIClient:
+async def initialize_eapi_client(*, for_download=False) -> EAPIClient:
     """
     Initialize the shared EAPI client using environment credentials.
 
@@ -220,15 +225,24 @@ async def initialize_eapi_client() -> EAPIClient:
     Returns:
         Authenticated EAPIClient instance
     """
-    global _eapi_client
+    global _eapi_client, _account_pool, _account_client_factory
 
-    email = os.environ.get("ZLIBRARY_EMAIL")
-    password = os.environ.get("ZLIBRARY_PASSWORD")
-
-    if not email or not password:
-        raise ValueError(
-            "ZLIBRARY_EMAIL and ZLIBRARY_PASSWORD environment variables required"
+    accounts = load_accounts()
+    _account_pool = None
+    if accounts is None:
+        email = os.environ.get("ZLIBRARY_EMAIL")
+        password = os.environ.get("ZLIBRARY_PASSWORD")
+        if not email or not password:
+            raise ValueError(
+                "ZLIBRARY_EMAIL and ZLIBRARY_PASSWORD environment variables required "
+                "(or configure ZLIBRARY_ACCOUNTS)"
+            )
+        accounts = [Account(email, password)]
+    else:
+        state_path = os.environ.get("ZLIBRARY_ACCOUNT_STATE_FILE") or str(
+            Path(project_root) / ".cache" / "zlibrary-account-pool.json"
         )
+        _account_pool = AccountPool(accounts, state_path)
 
     # ISSUE-API-002: the old single default (z-library.sk) is fronted by the
     # DiamWall anti-bot wall. resolve_eapi_domain() honours an explicit
@@ -238,11 +252,36 @@ async def initialize_eapi_client() -> EAPIClient:
     domain_pinned = bool(os.environ.get("ZLIBRARY_EAPI_DOMAIN", "").strip())
     initial_domain = await resolve_eapi_domain()
 
-    client = EAPIClient(initial_domain)
-    login_result = await client.login(email, password)
+    async def create_client(account):
+        return await _authenticate_account(account, initial_domain, domain_pinned)
 
-    if login_result.get("success") != 1:
-        raise RuntimeError(f"EAPI login failed: {login_result}")
+    _account_client_factory = create_client
+    if _account_pool is None:
+        _eapi_client = await create_client(accounts[0])
+    else:
+        _eapi_client = await _account_pool.acquire(
+            create_client, for_download=for_download
+        )
+    return _eapi_client
+
+
+async def _authenticate_account(account, initial_domain, domain_pinned):
+    """Authenticate on the resolved domain without exposing rejected credentials."""
+    client = EAPIClient(initial_domain)
+    try:
+        login_result = await client.login(account.email, account.password)
+        if login_result.get("success") != 1:
+            raise AccountAuthenticationError("EAPI login failed: credentials rejected")
+    except httpx.HTTPStatusError as error:
+        await client.close()
+        if error.response.status_code == 401:
+            raise AccountAuthenticationError(
+                "EAPI login failed: credentials rejected"
+            ) from None
+        raise
+    except BaseException:
+        await client.close()
+        raise
 
     logger.info(f"EAPI client authenticated (userid={client.remix_userid})")
 
@@ -273,8 +312,27 @@ async def initialize_eapi_client() -> EAPIClient:
         except Exception as e:
             logger.warning(f"Domain discovery failed, using initial domain: {e}")
 
-    _eapi_client = client
-    return _eapi_client
+    return client
+
+
+async def _download_eapi_book(book_id, book_hash, output_dir):
+    """Retry only quota failures before any file is written, using the next account."""
+    global _eapi_client
+    while True:
+        client = await get_eapi_client()
+        try:
+            return await client.download_file(
+                book_id=int(book_id), book_hash=book_hash, output_dir=output_dir
+            )
+        except DownloadLimitError:
+            if _account_pool is None:
+                raise
+            _account_pool.exhausted_accounts += 1
+            await client.close()
+            _eapi_client = None
+            _eapi_client = await _account_pool.acquire(
+                _account_client_factory, for_download=True
+            )
 
 
 def _classify_health_error(error: Exception) -> str:
@@ -746,7 +804,6 @@ async def download_book(
     from_source = (book_details.get("source") or "").lower() in SOURCE_ALIASES
 
     if not from_source:
-        eapi = await get_eapi_client()
         # Normalize book details to ensure 'book_hash' field
         book_details = normalize_book_details(book_details)
 
@@ -779,10 +836,8 @@ async def download_book(
                 book_details, output_dir
             )
         else:
-            original_download_path_str = await eapi.download_file(
-                book_id=int(book_id),
-                book_hash=book_hash,
-                output_dir=output_dir,
+            original_download_path_str = await _download_eapi_book(
+                book_id, book_hash, output_dir
             )
 
         if (
@@ -1106,9 +1161,15 @@ async def main():
         sys.exit(1)
 
     try:
-        # Initialize EAPI client for all functions except local file processing and multi-source search
-        if function_name not in ["process_document", "search_multi_source"]:
-            await initialize_eapi_client()
+        source_download = function_name == "download_book" and (
+            args_dict.get("book_details", {}).get("source") or ""
+        ).lower() in SOURCE_ALIASES
+        # Local processing and other sources do not use the Z-Library account pool.
+        if (
+            function_name not in ["process_document", "search_multi_source"]
+            and not source_download
+        ):
+            await initialize_eapi_client(for_download=function_name == "download_book")
 
         # Standardize 'language' key to 'languages' if present for search functions
         if function_name in ["search", "full_text_search"]:

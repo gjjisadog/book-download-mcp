@@ -582,6 +582,30 @@ function wrapResult(result: any, toolName: string) {
  * Z-Library tools still fail with their own clear error when invoked.
  */
 function validateCredentials(): void {
+  const pool = process.env.ZLIBRARY_ACCOUNTS?.trim();
+  if (pool) {
+    let accounts: unknown;
+    try {
+      accounts = JSON.parse(pool);
+    } catch {
+      throw new Error('ZLIBRARY_ACCOUNTS must be a JSON array of accounts');
+    }
+    const parsed = z
+      .array(z.object({
+        email: z.string().trim().min(1),
+        password: z.string().min(1),
+      }))
+      .min(1)
+      .safeParse(accounts);
+    if (!parsed.success) {
+      throw new Error('ZLIBRARY_ACCOUNTS requires a non-empty array of email/password strings');
+    }
+    const emails = parsed.data.map((account) => account.email.toLowerCase());
+    if (new Set(emails).size !== emails.length) {
+      throw new Error('ZLIBRARY_ACCOUNTS contains duplicate account emails');
+    }
+    return;
+  }
   const email = process.env.ZLIBRARY_EMAIL;
   const password = process.env.ZLIBRARY_PASSWORD;
 
@@ -596,8 +620,8 @@ function validateCredentials(): void {
         `download history) will fail when called. LibGen is unaffected: use ` +
         `search_multi_source with source="libgen" and pass results to ` +
         `download_book_to_file. To enable Z-Library, set "env": ` +
-        `{"ZLIBRARY_EMAIL": "...", "ZLIBRARY_PASSWORD": "..."} in your MCP ` +
-        `client configuration. See README.md.`,
+        `{"ZLIBRARY_EMAIL": "...", "ZLIBRARY_PASSWORD": "..."} or ` +
+        `ZLIBRARY_ACCOUNTS in your MCP client configuration. See README.md.`,
     );
   }
 }

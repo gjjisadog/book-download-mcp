@@ -46,6 +46,25 @@ class DiamWallError(RuntimeError):
     """
 
 
+class DownloadLimitError(RuntimeError):
+    """The file-link endpoint reports an exhausted download quota."""
+
+
+def _download_limit_reached(response: dict) -> bool:
+    user = response.get("user") or response
+    if str(user.get("downloads_today_left", "")) == "0":
+        return True
+    # Only inspect explicit error fields, never a book title or download URL.
+    error = response.get("error", "")
+    if isinstance(error, dict):
+        error = error.get("message", "")
+    message = f"{error} {response.get('message', '')}".lower()
+    return any(
+        phrase in message
+        for phrase in ("download limit", "downloads limit", "download quota", "daily limit")
+    )
+
+
 def _diamwall_error(domain: str, detail: str) -> DiamWallError:
     return DiamWallError(
         f"DiamWall anti-bot wall detected on {domain} ({detail}): the domain "
@@ -422,6 +441,8 @@ class EAPIClient:
         )
 
         if not download_url:
+            if _download_limit_reached(dl_resp):
+                raise DownloadLimitError("Z-Library download quota exhausted")
             raise RuntimeError(
                 f"EAPI returned no download link for book {book_id}. Response: {dl_resp}"
             )

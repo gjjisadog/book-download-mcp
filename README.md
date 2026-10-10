@@ -259,15 +259,53 @@ Use `download_book_to_file` with `process_for_rag: true` for combined download a
 
 ## Configuration
 
-The server requires Z-Library credentials, set as environment variables:
+Z-Library tools use credentials supplied through your MCP client's environment.
+Other sources and local document processing do not require Z-Library credentials.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ZLIBRARY_EMAIL` | Yes | Z-Library account email |
-| `ZLIBRARY_PASSWORD` | Yes | Z-Library account password |
+| `ZLIBRARY_EMAIL` | For single-account mode | Z-Library account email |
+| `ZLIBRARY_PASSWORD` | For single-account mode | Z-Library account password |
+| `ZLIBRARY_ACCOUNTS` | For account-pool mode | JSON array of accounts; overrides the single-account variables |
+| `ZLIBRARY_ACCOUNT_STATE_FILE` | No | Preference file; defaults to `.cache/zlibrary-account-pool.json` in the package directory |
 | `ZLIBRARY_MIRROR` | No | Custom Z-Library mirror URL |
 
-The server validates credentials at startup and emits a clear error if they are missing.
+Malformed account-pool configuration fails validation at startup. Missing credentials
+produce a warning; Z-Library tools fail when called, while other sources remain available.
+
+### Account pool and automatic failover
+
+Supply your own accounts in `ZLIBRARY_ACCOUNTS`, as a JSON string in your MCP
+configuration's `env` object:
+
+```json
+{
+  "ZLIBRARY_ACCOUNTS": "[{\"email\":\"first@example.com\",\"password\":\"first_password\"},{\"email\":\"second@example.com\",\"password\":\"second_password\"}]"
+}
+```
+
+The pool starts with the first account and remembers the most recently usable
+account across calls and restarts. A rejected login tries the next account. Before
+a Z-Library download, the pool checks the account's remaining quota and skips
+exhausted accounts. A quota rejection when obtaining a download link also tries
+the next account, covering a quota change between the check and the download.
+Each account is attempted at most once per call; if none is usable, the tool
+returns an error with rejection and exhaustion counts.
+
+Searches, download history, and quota queries use the selected account; quota
+and history are for that account, not totals for the pool. An account with no
+download quota can still serve searches. Network errors and anti-bot blocks use
+the existing error handling rather than account switching. Without
+`ZLIBRARY_ACCOUNTS`, the existing single-account behavior is preserved.
+
+The state file contains only a pool fingerprint and the preferred account index;
+passwords and login tokens are not saved there. Writes are atomic, so concurrent
+calls cannot leave a partially written preference. Concurrent calls may use the
+same account; the service enforces the actual download quota. If the package
+directory is read-only, set `ZLIBRARY_ACCOUNT_STATE_FILE` to a writable location.
+If state cannot be saved, failover still works within the current call, but the
+next call starts selection again. Keep account credentials in your private MCP
+configuration or environment. Accounts are not bundled with the source code.
 
 ### Logging
 
