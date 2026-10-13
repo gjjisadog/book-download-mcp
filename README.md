@@ -1,8 +1,14 @@
 # Z-Library MCP Server
 
-[![CI](https://github.com/loganrooks/zlibrary-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/loganrooks/zlibrary-mcp/actions/workflows/ci.yml)
-[![npm version](https://img.shields.io/npm/v/zlibrary-mcp)](https://www.npmjs.com/package/zlibrary-mcp)
-[![License: MIT](https://img.shields.io/github/license/loganrooks/zlibrary-mcp)](https://github.com/loganrooks/zlibrary-mcp/blob/master/LICENSE)
+[![CI](https://github.com/gjjisadog/zlibrary-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/gjjisadog/zlibrary-mcp/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/gjjisadog/zlibrary-mcp)](https://github.com/gjjisadog/zlibrary-mcp/blob/main/LICENSE)
+
+This independent development repository is based on
+[rookslog/zlibrary-mcp v1.4.0](https://github.com/rookslog/zlibrary-mcp/tree/v1.4.0)
+and adds a configurable account pool with automatic failover on rejected login
+or exhausted download quota. The upstream history and MIT license are preserved.
+Install from this repository to use these additions; the upstream npm package
+and published container images do not include this repository's changes.
 
 A Model Context Protocol (MCP) server that gives AI assistants -- Claude Code, Claude Desktop, RooCode, Cline -- the ability to search Z-Library, download books, and extract document content for Retrieval-Augmented Generation (RAG) workflows. Built with a Node.js/TypeScript MCP frontend and a Python bridge backend for document processing.
 
@@ -14,8 +20,11 @@ For what this project is — and deliberately isn't — see [VISION.md](VISION.m
 (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 
 ```bash
-npm install -g zlibrary-mcp
-cd "$(npm root -g)/zlibrary-mcp" && bash setup-uv.sh   # one-time Python environment setup
+git clone https://github.com/gjjisadog/zlibrary-mcp.git
+cd zlibrary-mcp
+bash setup-uv.sh
+npm ci
+npm run build
 ```
 
 Then add to your MCP client config (Claude Code `.mcp.json`, Claude Desktop `claude_desktop_config.json`):
@@ -24,10 +33,10 @@ Then add to your MCP client config (Claude Code `.mcp.json`, Claude Desktop `cla
 {
   "mcpServers": {
     "zlibrary": {
-      "command": "zlibrary-mcp",
+      "command": "node",
+      "args": ["/absolute/path/to/zlibrary-mcp/dist/index.js"],
       "env": {
-        "ZLIBRARY_EMAIL": "your-email@example.com",
-        "ZLIBRARY_PASSWORD": "your-password"
+        "ZLIBRARY_ACCOUNTS": "[{\"email\":\"first@example.com\",\"password\":\"first_password\"},{\"email\":\"second@example.com\",\"password\":\"second_password\"}]"
       }
     }
   }
@@ -114,7 +123,10 @@ For complete parameter documentation, types, and examples, see [API Reference](d
 
 ## Installation
 
-### Option A: npm (recommended)
+### Option A: Upstream npm package
+
+This installs the upstream release. For this repository's account-pool feature,
+use the source installation in Option B or the Quick Start above.
 
 **Prerequisites:** Node.js 22+, Python 3.10+, [UV](https://docs.astral.sh/uv/)
 
@@ -135,7 +147,7 @@ fork, `pyproject.toml`, `uv.lock`), so no clone is needed. Since v1.3.0 the
 release workflow verifies the tag against `package.json` and publishes with
 provenance, so the registry version tracks GitHub releases; if
 `npm view zlibrary-mcp version` ever trails the
-[latest release](https://github.com/loganrooks/zlibrary-mcp/releases), that is a
+[latest upstream release](https://github.com/rookslog/zlibrary-mcp/releases), that is a
 release-pipeline bug worth filing.
 
 ### Option B: From Source (for development)
@@ -147,7 +159,7 @@ release-pipeline bug worth filing.
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # 2. Clone and build
-git clone https://github.com/loganrooks/zlibrary-mcp.git
+git clone https://github.com/gjjisadog/zlibrary-mcp.git
 cd zlibrary-mcp
 git lfs pull         # Hydrates LFS-tracked test PDFs (don't run `git lfs install`;
                      # it conflicts with the repo's Husky-managed hooks)
@@ -198,7 +210,7 @@ RooCode / Cline (`mcp_settings.json`):
 
 **Prerequisites:** Docker
 
-Versioned images are published to GHCR on every release (`latest`, `1.3`,
+Upstream images are published to GHCR on every upstream release (`latest`, `1.3`,
 `1.3.2`, …) — no clone or build needed:
 
 ```bash
@@ -206,7 +218,7 @@ docker run -d --name zlibrary-mcp -p 8000:8000 \
   -e ZLIBRARY_EMAIL="your-email@example.com" \
   -e ZLIBRARY_PASSWORD="your-password" \
   -v "$PWD/downloads:/app/downloads" \
-  ghcr.io/loganrooks/zlibrary-mcp:latest
+  ghcr.io/rookslog/zlibrary-mcp:latest
 ```
 
 The image wraps the stdio server in
@@ -222,10 +234,11 @@ curl -s -N --max-time 3 http://localhost:8000/sse | head -2
 > Alpine caveat: OpenCV has no musl wheels, so X-mark detection is unavailable
 > in the container; everything else works.
 
-**Building from source instead** (adds a `/health` endpoint via compose):
+**Build this repository from source to include account-pool support**
+(adds a `/health` endpoint via compose):
 
 ```bash
-git clone https://github.com/loganrooks/zlibrary-mcp.git && cd zlibrary-mcp
+git clone https://github.com/gjjisadog/zlibrary-mcp.git && cd zlibrary-mcp
 cp docker/env.example docker/.env   # then edit in your credentials
 docker compose -f docker/docker-compose.yaml up -d
 curl http://localhost:8000/health

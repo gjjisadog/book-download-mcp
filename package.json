@@ -64,12 +64,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rookslog/zlibrary-mcp.git"
+    "url": "git+https://github.com/gjjisadog/zlibrary-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/rookslog/zlibrary-mcp/issues"
+    "url": "https://github.com/gjjisadog/zlibrary-mcp/issues"
   },
-  "homepage": "https://github.com/rookslog/zlibrary-mcp#readme",
+  "homepage": "https://github.com/gjjisadog/zlibrary-mcp#readme",
   "engines": {
     "node": ">=22"
   },

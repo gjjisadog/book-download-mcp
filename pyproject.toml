@@ -60,9 +60,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/loganrooks/zlibrary-mcp"
-Repository = "https://github.com/loganrooks/zlibrary-mcp.git"
-Issues = "https://github.com/loganrooks/zlibrary-mcp/issues"
+Homepage = "https://github.com/gjjisadog/zlibrary-mcp"
+Repository = "https://github.com/gjjisadog/zlibrary-mcp.git"
+Issues = "https://github.com/gjjisadog/zlibrary-mcp/issues"
 
 [build-system]
 requires = ["setuptools>=83.0.0", "wheel"]
