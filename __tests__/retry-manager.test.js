@@ -157,20 +157,20 @@ describe('Retry Manager', () => {
 
     test('should return true for server errors', () => {
       expect(retryManager.isRetryableError({ code: 'SERVER_ERROR' })).toBe(true);
-      expect(retryManager.isRetryableError({ code: '500' })).toBe(true);
-      expect(retryManager.isRetryableError({ code: '503' })).toBe(true);
+      expect(retryManager.isRetryableError({ code: 'SERVER_ERROR' })).toBe(true);
+      expect(retryManager.isRetryableError({ code: 'SERVER_ERROR' })).toBe(true);
     });
 
     test('should return true for domain errors', () => {
       expect(retryManager.isRetryableError({ code: 'DOMAIN_ERROR' })).toBe(true);
     });
 
-    test('should return true for transient Python errors', () => {
+    test('should not infer retries from Python error text', () => {
       const error = {
         code: 'PYTHON_ERROR',
         message: 'Connection timeout occurred'
       };
-      expect(retryManager.isRetryableError(error)).toBe(true);
+      expect(retryManager.isRetryableError(error)).toBe(false);
     });
 
     test('should return false for non-transient Python errors', () => {

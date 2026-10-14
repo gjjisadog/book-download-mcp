@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import sys
 import os
+import tempfile
 import json
-import traceback
 import httpx
 
 # Add project root to sys.path to allow importing 'lib'
@@ -24,7 +24,22 @@ from lib import enhanced_metadata
 # Import multi-source router
 from lib.sources.router import SourceRouter
 from lib.sources.config import get_source_config
-from lib.account_pool import Account, AccountAuthenticationError, AccountPool, load_accounts
+from lib.sources.models import normalize_md5
+from lib.logging_utils import configure_logging, redact
+from lib.bridge_errors import error_record
+from lib.session_cache import (
+    load_sessions,
+    get_session,
+    remember_session,
+    forget_session,
+    export_sessions,
+)
+from lib.account_pool import (
+    Account,
+    AccountAuthenticationError,
+    AccountPool,
+    load_accounts,
+)
 
 # Add zlibrary source directory to path for EAPI imports
 zlibrary_src_path = os.path.join(os.path.dirname(__file__), "..", "zlibrary", "src")
@@ -59,25 +74,7 @@ DEBUG_MODE = os.environ.get("ZLIBRARY_DEBUG", os.environ.get("DEBUG", "")).lower
 
 
 def _configure_debug_logging():
-    """Configure logging based on debug mode setting."""
-    if DEBUG_MODE:
-        # Set up detailed debug logging
-        logging.basicConfig(
-            level=logging.DEBUG,
-            format="%(asctime)s [%(levelname)s] %(name)s:%(funcName)s:%(lineno)d - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-        logger.setLevel(logging.DEBUG)
-        logger.debug("Debug mode enabled via environment variable")
-    else:
-        # Default: INFO level with simpler format
-        if not logging.getLogger().handlers:
-            logging.basicConfig(
-                level=logging.INFO,
-                format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
-            )
-        logger.setLevel(logging.INFO)
+    configure_logging(DEBUG_MODE)
 
 
 # Configure logging on module load
@@ -227,13 +224,14 @@ async def initialize_eapi_client(*, for_download=False) -> EAPIClient:
     """
     global _eapi_client, _account_pool, _account_client_factory
 
+    load_sessions()
     accounts = load_accounts()
     _account_pool = None
     if accounts is None:
         email = os.environ.get("ZLIBRARY_EMAIL")
         password = os.environ.get("ZLIBRARY_PASSWORD")
         if not email or not password:
-            raise ValueError(
+            raise AccountAuthenticationError(
                 "ZLIBRARY_EMAIL and ZLIBRARY_PASSWORD environment variables required "
                 "(or configure ZLIBRARY_ACCOUNTS)"
             )
@@ -250,7 +248,10 @@ async def initialize_eapi_client(*, for_download=False) -> EAPIClient:
     # fallback list (GET /eapi/info/domains — never login, which is
     # rate-limited) and logs in on the first healthy candidate.
     domain_pinned = bool(os.environ.get("ZLIBRARY_EAPI_DOMAIN", "").strip())
-    initial_domain = await resolve_eapi_domain()
+    cached = next(
+        (get_session(account) for account in accounts if get_session(account)), None
+    )
+    initial_domain = cached["domain"] if cached else await resolve_eapi_domain()
 
     async def create_client(account):
         return await _authenticate_account(account, initial_domain, domain_pinned)
@@ -267,6 +268,29 @@ async def initialize_eapi_client(*, for_download=False) -> EAPIClient:
 
 async def _authenticate_account(account, initial_domain, domain_pinned):
     """Authenticate on the resolved domain without exposing rejected credentials."""
+    cached = get_session(account)
+    if cached:
+        client = EAPIClient(
+            cached["domain"],
+            remix_userid=cached["userid"],
+            remix_userkey=cached["userkey"],
+        )
+        try:
+            profile = await client.get_profile()
+            if profile.get("success") == 1:
+                return client
+            # HTTP 200 with success=0 also indicates an invalid cached login.
+            forget_session(account)
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code not in (401, 403):
+                await client.close()
+                raise
+            forget_session(account)
+        except BaseException:
+            await client.close()
+            raise
+        await client.close()
+
     client = EAPIClient(initial_domain)
     try:
         login_result = await client.login(account.email, account.password)
@@ -283,7 +307,7 @@ async def _authenticate_account(account, initial_domain, domain_pinned):
         await client.close()
         raise
 
-    logger.info(f"EAPI client authenticated (userid={client.remix_userid})")
+    logger.info("EAPI client authenticated")
 
     # Discover optimal domain — skipped entirely when ZLIBRARY_EAPI_DOMAIN is
     # set (an explicit override means no silent switching, ever). Advertised
@@ -312,6 +336,7 @@ async def _authenticate_account(account, initial_domain, domain_pinned):
         except Exception as e:
             logger.warning(f"Domain discovery failed, using initial domain: {e}")
 
+    remember_session(account, client)
     return client
 
 
@@ -322,7 +347,10 @@ async def _download_eapi_book(book_id, book_hash, output_dir):
         client = await get_eapi_client()
         try:
             return await client.download_file(
-                book_id=int(book_id), book_hash=book_hash, output_dir=output_dir
+                book_id=int(book_id),
+                book_hash=book_hash,
+                output_dir=output_dir,
+                temporary=True,
             )
         except DownloadLimitError:
             if _account_pool is None:
@@ -397,7 +425,7 @@ async def eapi_health_check() -> dict:
         return {
             "status": "unhealthy",
             "transport": "eapi",
-            "error": str(e),
+            "error": redact(str(e)),
             "error_code": _classify_health_error(e),
         }
 
@@ -730,43 +758,57 @@ async def _download_url_to_file(url: str, output_dir: str, md5: str) -> str:
     """
     import httpx
 
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-    raw_path = Path(output_dir) / f"{md5}.download"
+    md5 = normalize_md5(md5)
+    directory = Path(output_dir).resolve()
+    raw_path = directory / f"{md5}.download"
+    if not raw_path.resolve().is_relative_to(directory):
+        raise ValueError("Download path must remain inside output_dir")
+    directory.mkdir(parents=True, exist_ok=True)
 
-    async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
-        async with client.stream("GET", url) as response:
-            response.raise_for_status()
-
-            content_type = response.headers.get("content-type", "")
-            if "text/html" in content_type:
-                raise ValueError(
-                    f"Source served HTML rather than a file for {md5} — the "
-                    f"download key has most likely expired. Re-resolve and retry."
-                )
-
-            written = 0
-            with open(raw_path, "wb") as handle:
-                async for chunk in response.aiter_bytes(65536):
-                    handle.write(chunk)
-                    written += len(chunk)
-
-    if written == 0:
-        raw_path.unlink(missing_ok=True)
-        raise ValueError(f"Source returned an empty body for {md5}")
-
-    logger.info(f"Downloaded {written} bytes from source to {raw_path}")
-    return str(raw_path)
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{md5}-", suffix=".download", dir=directory
+    )
+    os.close(fd)
+    raw_path = Path(temporary_name)
+    completed = False
+    try:
+        async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+                if "text/html" in response.headers.get("content-type", ""):
+                    raise ValueError(
+                        "Source served HTML rather than a file; resolve a new download URL"
+                    )
+                written = 0
+                with open(raw_path, "wb") as handle:
+                    async for chunk in response.aiter_bytes(65536):
+                        handle.write(chunk)
+                        written += len(chunk)
+                expected = response.headers.get("content-length")
+                if written == 0 or (
+                    expected
+                    and not response.headers.get("content-encoding")
+                    and written != int(expected)
+                ):
+                    raise ValueError("Source returned an empty or incomplete download")
+        completed = True
+        return str(raw_path)
+    finally:
+        if not completed:
+            raw_path.unlink(missing_ok=True)
 
 
 async def _fetch_from_source(book_details: dict, output_dir: str) -> str:
     """Resolve and fetch a non-Z-Library book. Returns the raw file path."""
-    md5 = (book_details.get("md5") or "").strip()
+    md5 = book_details.get("md5")
     source = (book_details.get("source") or "auto").lower()
     if not md5:
         raise ValueError(
             "Missing 'md5' in bookDetails. Source downloads are addressed by "
             "md5 — pass a result from search_multi_source."
         )
+
+    md5 = normalize_md5(md5)
 
     router = await get_source_router()
     selection = (
@@ -827,6 +869,7 @@ async def download_book(
     final_file_path_str = None  # Path with enhanced filename
     processed_file_path_str = None  # Path for RAG processed file
     process_result = None
+    original_download_path_str = None
 
     try:
         # Step 1: Fetch the file. Z-Library goes through the EAPI client;
@@ -849,7 +892,7 @@ async def download_book(
             )
 
         # Step 2: Create the unified filename.
-        if "extension" not in book_details and original_download_path_str:
+        if not book_details.get("extension") and original_download_path_str:
             _, ext_from_path = os.path.splitext(original_download_path_str)
             book_details["extension"] = ext_from_path.lstrip(".")
 
@@ -859,12 +902,15 @@ async def download_book(
             year=book_details.get("year", ""),
             language=book_details.get("language", ""),
         )
-        final_file_path = Path(output_dir) / unified_filename
+        directory = Path(output_dir).resolve()
+        final_file_path = directory / unified_filename
+        if not final_file_path.resolve().is_relative_to(directory):
+            raise ValueError("Download path must remain inside output_dir")
         final_file_path_str = str(final_file_path)
 
         # Step 3: Rename the downloaded file to the enhanced filename.
         Path(output_dir).mkdir(parents=True, exist_ok=True)
-        os.rename(original_download_path_str, final_file_path_str)
+        os.replace(original_download_path_str, final_file_path_str)
         logger.info(
             f"Renamed downloaded file from {original_download_path_str} to {final_file_path_str}"
         )
@@ -897,6 +943,12 @@ async def download_book(
         identifier = book_details.get("id") or book_details.get("md5") or "unknown"
         logger.exception(f"Error in download_book for {identifier}")
         raise e
+    finally:
+        if (
+            original_download_path_str
+            and original_download_path_str != downloaded_file_path_str
+        ):
+            Path(original_download_path_str).unlink(missing_ok=True)
 
 
 async def get_book_metadata_complete(book_id: str, book_hash: str = None) -> dict:
@@ -967,7 +1019,7 @@ async def search_by_term_bridge(
     langs_str = ",".join(languages) if languages else None
     exts_str = ",".join(extensions) if extensions else None
 
-    logger.info(
+    logger.debug(
         f"python_bridge.search_by_term: term='{term}', year_from={year_from}, year_to={year_to}"
     )
 
@@ -1142,15 +1194,17 @@ async def main():
 
     function_name = cli_args.function_name
     try:
-        logger.info(f"python_bridge.main: Received raw args_json: {cli_args.args_json}")
+        logger.debug(
+            f"python_bridge.main: Received raw args_json: {cli_args.args_json}"
+        )
         args_dict_immediately_after_parse = json.loads(cli_args.args_json)
-        logger.info(
+        logger.debug(
             f"python_bridge.main: args_dict_immediately_after_parse: {args_dict_immediately_after_parse}"
         )
 
         # Use a new variable for subsequent operations
         args_dict = args_dict_immediately_after_parse.copy()
-        logger.info(
+        logger.debug(
             f"python_bridge.main: Initial args_dict (now a copy) for processing: {args_dict}"
         )
 
@@ -1161,9 +1215,11 @@ async def main():
         sys.exit(1)
 
     try:
-        source_download = function_name == "download_book" and (
-            args_dict.get("book_details", {}).get("source") or ""
-        ).lower() in SOURCE_ALIASES
+        source_download = (
+            function_name == "download_book"
+            and (args_dict.get("book_details", {}).get("source") or "").lower()
+            in SOURCE_ALIASES
+        )
         # Local processing and other sources do not use the Z-Library account pool.
         if (
             function_name not in ["process_document", "search_multi_source"]
@@ -1184,12 +1240,12 @@ async def main():
                 args_dict["content_types"] = []
 
         if function_name == "search":
-            logger.info(
+            logger.debug(
                 f"python_bridge.main: About to call search with args_dict: {args_dict}"
             )
             result = await search(**args_dict)
         elif function_name == "full_text_search":
-            logger.info(
+            logger.debug(
                 f"python_bridge.main: About to call full_text_search with args_dict: {args_dict}"
             )
             result = await full_text_search(**args_dict)
@@ -1224,15 +1280,13 @@ async def main():
 
         # Print only confirmation and path to stdout to avoid large content
         mcp_style_response = {"content": [{"type": "text", "text": json.dumps(result)}]}
+        if os.environ.get("ZLIBRARY_SESSION_CACHE") is not None:
+            mcp_style_response["session_cache"] = export_sessions()
         print(json.dumps(mcp_style_response))
 
     except Exception as e:
         # Print error as JSON to stderr
-        error_info = {
-            "error": str(e),
-            "type": type(e).__name__,
-            "traceback": traceback.format_exc(),
-        }
+        error_info = error_record(e)
         print(json.dumps(error_info), file=sys.stderr)
         sys.exit(1)
     finally:

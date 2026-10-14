@@ -38,11 +38,7 @@ describe('Z-Library API', () => {
       // ensureVenvReady is not used here
     }));
 
-    jest.unstable_mockModule('python-shell', () => ({
-      PythonShell: {
-        run: mockPythonShellRun,
-      },
-    }));
+    jest.unstable_mockModule('../lib/bridge-runner.js', () => ({ runPythonBridge: mockPythonShellRun }));
 
     // Mock fs, http, https selectively
     mockWriteStream = { // Mock write stream instance
@@ -119,7 +115,7 @@ describe('Z-Library API', () => {
       // Simulate PythonShell.run rejecting
       mockPythonShellRun.mockRejectedValue(apiError);
 
-      await expect(zlibApi.searchBooks({ query: 'test' })).rejects.toThrow(`Python bridge execution failed for search: ${apiError.message}`);
+      await expect(zlibApi.searchBooks({ query: 'test' })).rejects.toThrow('Python bridge execution failed for search');
   // Test suite for the internal callPythonFunction logic
       expect(mockPythonShellRun).toHaveBeenCalledWith('python_bridge.py', expect.objectContaining({ scriptPath: EXPECTED_SCRIPT_PATH, args: ['search', JSON.stringify({ query: 'test', exact: false, from_year: null, to_year: null, languages: [], extensions: [], content_types: [], count: 10 })] })); // Corrected script name and path
     });
@@ -138,7 +134,7 @@ describe('Z-Library API', () => {
       // Adjust expectation to match observed behavior (original error thrown)
       await expect(zlibApi.searchBooks({ query: 'test' }))
         .rejects
-        .toThrow(`Python bridge execution failed for search: ${pathError.message}`); // Expect the wrapped error message
+        .toThrow('Python bridge execution failed for search'); // Expect the wrapped error message
 
       // Verify mocks
       expect(mockGetManagedPythonPath).toHaveBeenCalled();
@@ -154,7 +150,7 @@ describe('Z-Library API', () => {
       // Act & Assert
       await expect(zlibApi.searchBooks({ query: 'test' }))
         .rejects
-        .toThrow(`Python bridge execution failed for search: ${shellError.message}`);
+        .toThrow('Python bridge execution failed for search');
 
       // Verify mocks
       expect(mockGetManagedPythonPath).toHaveBeenCalled();
@@ -173,7 +169,7 @@ describe('Z-Library API', () => {
       // Act & Assert
       await expect(zlibApi.searchBooks({ query: 'test' }))
         .rejects
-        .toThrow(`Python bridge execution failed for search: ${pythonErrorMsg}`);
+        .toThrow('Python bridge execution failed for search');
 
       // Verify mocks
       expect(mockGetManagedPythonPath).toHaveBeenCalled();
@@ -231,7 +227,7 @@ describe('Z-Library API', () => {
       expect(mockPythonShellRun).toHaveBeenCalled();
     });
 
-    test('should include stderr in error message when PythonShell provides it', async () => {
+    test('should omit raw stderr from errors', async () => {
       // Arrange: Mock PythonShell.run to throw error with stderr
       const shellError = new Error('Python script failed');
       shellError.stderr = 'ImportError: No module named foo\nTraceback...';
@@ -241,7 +237,7 @@ describe('Z-Library API', () => {
       // Act & Assert
       await expect(zlibApi.searchBooks({ query: 'test' }))
         .rejects
-        .toThrow(/Python bridge execution failed for search:.*Stderr: ImportError: No module named foo/);
+        .toThrow(/Python bridge execution failed for search/);
 
       // Verify mocks
       expect(mockGetManagedPythonPath).toHaveBeenCalled();
@@ -259,7 +255,7 @@ describe('Z-Library API', () => {
       // Act & Assert
       await expect(zlibApi.searchBooks({ query: 'test' }))
         .rejects
-        .toThrow(/Python bridge execution failed for search: Process exited with code 1.*Stderr: SyntaxError/);
+        .toThrow(/Python bridge execution failed for search/);
 
       // Verify mocks
       expect(mockGetManagedPythonPath).toHaveBeenCalled();
@@ -275,7 +271,7 @@ describe('Z-Library API', () => {
       // Act & Assert
       await expect(zlibApi.searchBooks({ query: 'test' }))
         .rejects
-        .toThrow(/Python bridge execution failed for search: Timeout/);
+        .toThrow(/Python bridge execution failed for search/);
 
       // Verify mocks
       expect(mockGetManagedPythonPath).toHaveBeenCalled();
@@ -343,7 +339,7 @@ describe('Z-Library API', () => {
       mockGetManagedPythonPath.mockResolvedValue('/fake/python');
       mockPythonShellRun.mockRejectedValue(apiError);
 
-      await expect(zlibApi.fullTextSearch({ query: 'fail text' })).rejects.toThrow(`Python bridge execution failed for full_text_search: ${apiError.message}`);
+      await expect(zlibApi.fullTextSearch({ query: 'fail text' })).rejects.toThrow('Python bridge execution failed for full_text_search');
       // Check default args passed to python
       expect(mockPythonShellRun).toHaveBeenCalledWith('python_bridge.py', expect.objectContaining({ scriptPath: EXPECTED_SCRIPT_PATH, args: ['full_text_search', JSON.stringify({ query: 'fail text', exact: false, phrase: true, words: false, languages: [], extensions: [], content_types: [], count: 10 })] })); // Corrected script name and path
     });
@@ -517,7 +513,7 @@ describe('Z-Library API', () => {
       mockPythonShellRun.mockRejectedValue(apiError);
 
       const mockBookDetails = { id: 'failDownload', url: 'http://example.com/book/failDownload/slug' };
-      await expect(zlibApi.downloadBookToFile({ bookDetails: mockBookDetails })).rejects.toThrow(`Python bridge execution failed for download_book: ${apiError.message}`);
+      await expect(zlibApi.downloadBookToFile({ bookDetails: mockBookDetails })).rejects.toThrow('Python bridge execution failed for download_book');
       expect(mockPythonShellRun).toHaveBeenCalledWith('python_bridge.py', expect.objectContaining({ scriptPath: EXPECTED_SCRIPT_PATH, args: ['download_book', JSON.stringify({ book_details: mockBookDetails, output_dir: './downloads', process_for_rag: false, processed_output_format: 'txt' })] }));
     });
 
@@ -547,7 +543,7 @@ describe('Z-Library API', () => {
       mockGetManagedPythonPath.mockResolvedValue('/fake/python');
       mockPythonShellRun.mockRejectedValue(apiError);
 
-      await expect(zlibApi.getDownloadHistory({ count: 5 })).rejects.toThrow(`Python bridge execution failed for get_download_history: ${apiError.message}`);
+      await expect(zlibApi.getDownloadHistory({ count: 5 })).rejects.toThrow('Python bridge execution failed for get_download_history');
       expect(mockPythonShellRun).toHaveBeenCalledWith('python_bridge.py', expect.objectContaining({ scriptPath: EXPECTED_SCRIPT_PATH, args: ['get_download_history', JSON.stringify({ count: 5 })] })); // Corrected script name and path
     });
   });
@@ -575,7 +571,7 @@ describe('Z-Library API', () => {
       mockGetManagedPythonPath.mockResolvedValue('/fake/python');
       mockPythonShellRun.mockRejectedValue(apiError);
 
-      await expect(zlibApi.getDownloadLimits()).rejects.toThrow(`Python bridge execution failed for get_download_limits: ${apiError.message}`);
+      await expect(zlibApi.getDownloadLimits()).rejects.toThrow('Python bridge execution failed for get_download_limits');
       expect(mockPythonShellRun).toHaveBeenCalledWith('python_bridge.py', expect.objectContaining({ scriptPath: EXPECTED_SCRIPT_PATH, args: ['get_download_limits', JSON.stringify({})] })); // Corrected script name and path
     });
   });
@@ -690,7 +686,7 @@ describe('Z-Library API', () => {
       mockGetManagedPythonPath.mockResolvedValue('/fake/python');
       mockPythonShellRun.mockRejectedValue(apiError);
 
-      await expect(zlibApi.processDocumentForRag({ filePath: './local/doc.txt' })).rejects.toThrow(`Python bridge execution failed for process_document: ${apiError.message}`);
+      await expect(zlibApi.processDocumentForRag({ filePath: './local/doc.txt' })).rejects.toThrow('Python bridge execution failed for process_document');
       const expectedPythonFilePath = path.resolve('./local/doc.txt');
       expect(mockPythonShellRun).toHaveBeenCalledWith('python_bridge.py', expect.objectContaining({ scriptPath: EXPECTED_SCRIPT_PATH, args: ['process_document', JSON.stringify({ file_path_str: expectedPythonFilePath, output_format: 'txt' })] }));
     });

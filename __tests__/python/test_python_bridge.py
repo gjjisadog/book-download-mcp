@@ -446,7 +446,7 @@ class TestDownloadBook:
         mocker.patch(
             "python_bridge.create_unified_filename", return_value=expected_filename
         )
-        mocker.patch("os.rename")
+        mocker.patch("os.replace")
         mocker.patch("pathlib.Path.exists", return_value=True)
         mocker.patch("python_bridge.process_document", AsyncMock())
 
@@ -482,7 +482,7 @@ class TestDownloadBook:
         mocker.patch(
             "python_bridge.create_unified_filename", return_value=expected_filename
         )
-        mocker.patch("os.rename")
+        mocker.patch("os.replace")
         mocker.patch("pathlib.Path.exists", return_value=True)
         mocker.patch(
             "python_bridge.process_document",

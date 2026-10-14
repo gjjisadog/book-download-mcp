@@ -200,7 +200,7 @@ class TestAnnasArchiveFastDownload:
             mock_client.get.return_value = mock_response
             mock_get_client.return_value = mock_client
 
-            result = await adapter.get_download_url("abc123def456")
+            result = await adapter.get_download_url("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 
         assert result.url == "http://partner.example.com/download/abc123def456.pdf"
         assert result.source == SourceType.ANNAS_ARCHIVE
@@ -229,7 +229,7 @@ class TestAnnasArchiveFastDownload:
             mock_client.get.return_value = mock_response
             mock_get_client.return_value = mock_client
 
-            await adapter.get_download_url("abc123def456")
+            await adapter.get_download_url("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 
             # Verify domain_index=1 was used in the request
             call_args = mock_client.get.call_args
@@ -260,7 +260,7 @@ class TestAnnasArchiveFastDownload:
             mock_client.get.return_value = mock_response
             mock_get_client.return_value = mock_client
 
-            result = await adapter.get_download_url("abc123def456")
+            result = await adapter.get_download_url("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 
         assert result.quota_info is not None
         assert result.quota_info.downloads_left == 23
@@ -292,7 +292,7 @@ class TestAnnasArchiveFastDownload:
             mock_get_client.return_value = mock_client
 
             with pytest.raises(Exception) as exc_info:
-                await adapter.get_download_url("invalid_md5")
+                await adapter.get_download_url("a" * 32)
 
             assert "Invalid MD5 hash" in str(exc_info.value)
 
@@ -311,7 +311,7 @@ class TestAnnasArchiveFastDownload:
         adapter = AnnasArchiveAdapter(config)
 
         with pytest.raises(ValueError) as exc_info:
-            await adapter.get_download_url("abc123def456")
+            await adapter.get_download_url("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 
         assert "ANNAS_SECRET_KEY" in str(exc_info.value)
 
@@ -341,7 +341,7 @@ class TestAnnasArchiveFastDownload:
             mock_get_client.return_value = mock_client
 
             with pytest.raises(Exception) as exc_info:
-                await adapter.get_download_url("abc123def456")
+                await adapter.get_download_url("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 
             assert "download_url" in str(exc_info.value).lower()
 
@@ -457,7 +457,7 @@ class TestSecretKeyHostAllowlist:
         mock_client = AsyncMock()
         with patch.object(adapter, "_get_client", return_value=mock_client):
             with pytest.raises(ValueError, match="Refusing to send ANNAS_SECRET_KEY"):
-                await adapter.get_download_url("abc123def456")
+                await adapter.get_download_url("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 
         # The key must never have been put on the wire.
         mock_client.get.assert_not_called()
@@ -483,7 +483,7 @@ class TestSecretKeyHostAllowlist:
             mock_client.get.return_value = mock_response
             mock_get_client.return_value = mock_client
 
-            result = await adapter.get_download_url("abc123def456")
+            result = await adapter.get_download_url("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 
         assert result.url == MOCK_FAST_DOWNLOAD_RESPONSE["download_url"]
 

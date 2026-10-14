@@ -50,3 +50,22 @@ def _clear_pymupdf_cache():
         _clear_textpage_cache()
     except ImportError:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _guard_unhydrated_pdf_reads(monkeypatch):
+    """Skip only reads of actual LFS pointers, including old fixture consumers.
+
+    Synthetic PDFs and corrupt-file tests still run. Keeping the guard at the
+    test boundary avoids teaching production PDF processing about Git LFS.
+    """
+    import fitz
+
+    original_open = fitz.open
+
+    def open_fixture(filename=None, *args, **kwargs):
+        if isinstance(filename, (str, os.PathLike)) and is_lfs_pointer(filename):
+            require_real_fixture(filename)
+        return original_open(filename, *args, **kwargs)
+
+    monkeypatch.setattr(fitz, "open", open_fixture)

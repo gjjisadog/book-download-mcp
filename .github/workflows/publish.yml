@@ -28,7 +28,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - uses: astral-sh/setup-uv@v7
       - run: npm ci
-      - run: uv sync
+      - run: uv sync --frozen
       - run: npm run build
       - name: Run tests
         run: |
@@ -53,7 +53,7 @@ jobs:
       # Auth comes from npm's OIDC trusted publisher for this repo/workflow —
       # no NODE_AUTH_TOKEN. Provenance is generated automatically under OIDC.
       - name: Publish with provenance
-        run: npm publish --provenance
+        run: npm publish --provenance --access public
 
   # Ships the same release as a container image so Docker users get versioned
   # tags instead of having to build from source (requested in issue #9).

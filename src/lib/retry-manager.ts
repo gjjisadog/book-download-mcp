@@ -23,7 +23,7 @@ export interface RetryOptions {
  */
 export async function withRetry<T>(
   operation: () => Promise<T>,
-  options: RetryOptions = {}
+  options: RetryOptions = {},
 ): Promise<T> {
   const {
     maxRetries = 3,
@@ -31,7 +31,7 @@ export async function withRetry<T>(
     maxDelay = 30000,
     factor = 2,
     shouldRetry = (error) => !error.fatal,
-    onRetry
+    onRetry,
   } = options;
 
   let lastError: any;
@@ -53,7 +53,7 @@ export async function withRetry<T>(
         error: errorMessage,
         attempt: attempt + 1,
         maxRetries,
-        delay
+        delay,
       });
 
       // Call custom retry callback if provided
@@ -62,7 +62,7 @@ export async function withRetry<T>(
       }
 
       // Wait before retry
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await new Promise((resolve) => setTimeout(resolve, delay));
 
       // Calculate next delay with exponential backoff
       delay = Math.min(delay * factor, maxDelay);
@@ -78,48 +78,15 @@ export async function withRetry<T>(
  * @returns true if the error should trigger a retry
  */
 export function isRetryableError(error: any): boolean {
-  // Fatal errors that should not be retried
-  if (error.fatal === true) {
-    return false;
-  }
-
-  // Authentication/authorization errors are not retryable
-  if (error.code === 'AUTH_ERROR' || error.code === 'FORBIDDEN') {
-    return false;
-  }
-
-  // Invalid input errors are not retryable
-  if (error.code === 'INVALID_INPUT' || error.code === 'VALIDATION_ERROR') {
-    return false;
-  }
-
-  // Network errors are retryable
-  if (error.code === 'NETWORK_ERROR' ||
-      error.code === 'TIMEOUT' ||
-      error.code === 'ECONNREFUSED' ||
-      error.code === 'ENOTFOUND' ||
-      error.code === 'ETIMEDOUT') {
-    return true;
-  }
-
-  // Python bridge errors might be transient
-  if (error.code === 'PYTHON_ERROR') {
-    // Check if it's a transient Python error
-    const message = error.message?.toLowerCase() || '';
-    if (message.includes('timeout') ||
-        message.includes('connection') ||
-        message.includes('network')) {
-      return true;
-    }
-  }
-
-  // Domain/server errors are retryable
-  if (error.code === 'DOMAIN_ERROR' ||
-      error.code === 'SERVER_ERROR' ||
-      error.code?.startsWith('5')) {
-    return true;
-  }
-
-  // Default to not retryable if we can't classify
-  return false;
+  if (!error || error.fatal === true || error.retryable === false) return false;
+  return [
+    'NETWORK_ERROR',
+    'TIMEOUT',
+    'ECONNREFUSED',
+    'ENOTFOUND',
+    'ETIMEDOUT',
+    'DOMAIN_ERROR',
+    'SERVER_ERROR',
+    'RATE_LIMITED',
+  ].includes(error.code);
 }

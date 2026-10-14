@@ -66,18 +66,20 @@ class TestPerformance:
             "large": "Sample text. " * 1000,  # ~13,000 chars
         }
 
+        # Complexity compares CPU work; scheduler contention on shared CI
+        # runners must not inflate the large-input measurement.
         timings = {}
 
         for size, text in texts.items():
-            start = time.perf_counter()
+            start = time.process_time()
             for _ in range(100):  # Average over 100 runs
                 detect_garbled_text_enhanced(text)
-            duration = time.perf_counter() - start
+            duration = time.process_time() - start
             timings[size] = duration / 100  # Average per run
 
         # Should scale roughly linearly
-        # Large should not be 10x slower than small (that would indicate O(n²))
-        # Allow up to 2.5x scaling for 10x text increase (accounting for overhead)
+        # Quadratic growth would be about 100x for a 10x input increase.
+        # Allow up to 15x for linear work plus measurement overhead.
         small_time = timings["small"]
         large_time = timings["large"]
 
@@ -86,7 +88,7 @@ class TestPerformance:
             f"Scaling factor {scaling_factor:.2f} suggests non-linear complexity"
         )
 
-        # Also verify absolute performance
+        # Also verify the absolute CPU-time budget
         assert large_time < 0.015, (
             f"Large text took {large_time * 1000:.2f}ms (should be <15ms)"
         )

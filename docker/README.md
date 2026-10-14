@@ -14,7 +14,13 @@ cp env.example .env
 docker compose up -d
 ```
 
-The server will be available at `http://localhost:8000`.
+The server is bound to `127.0.0.1:8000` on the host. Remote clients should use an authenticated SSH tunnel:
+
+```bash
+ssh -N -L 8000:127.0.0.1:8000 user@server
+```
+
+Then connect to `http://localhost:8000/sse` locally. For public HTTP access, keep this loopback binding and place a TLS reverse proxy with authentication in front of it; authenticate both `/sse` and `/message`. Do not publish port 8000 directly. The pinned SuperGateway 3.4.3 has no inbound API-key authentication; `--oauth2Bearer` sets an outgoing header and does not protect this server ([versioned CLI source](https://github.com/supercorp-ai/supergateway/blob/v3.4.3/src/index.ts)).
 
 ## Manual Build
 
@@ -24,12 +30,14 @@ docker build -t zlibrary-mcp -f docker/Dockerfile .
 
 # Run standalone
 docker run -d \
-  -p 8000:8000 \
+  -p 127.0.0.1:8000:8000 \
   -e ZLIBRARY_EMAIL=your@email.com \
   -e ZLIBRARY_PASSWORD=your_password \
   -v $(pwd)/downloads:/app/downloads \
   zlibrary-mcp
 ```
+
+SuperGateway protocol logging is disabled (`--logLevel none`) because this pinned version logs complete MCP messages at its default level. The application still respects `LOG_LEVEL`; use its diagnostics for troubleshooting.
 
 ## Configuration
 

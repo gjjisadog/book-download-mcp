@@ -123,32 +123,22 @@ For complete parameter documentation, types, and examples, see [API Reference](d
 
 ## Installation
 
-### Option A: Upstream npm package
+### Option A: Independent npm package (after first publication)
 
-This installs the upstream release. For this repository's account-pool feature,
-use the source installation in Option B or the Quick Start above.
+The independent package identity is `@gjjisadog/zlibrary-mcp`, version `1.4.1`.
+Until its first npm release is available, use the source installation below.
 
 **Prerequisites:** Node.js 22+, Python 3.10+, [UV](https://docs.astral.sh/uv/)
 
 ```bash
-npm install -g zlibrary-mcp
-```
-
-Then set up the Python environment inside the installed package (one-time):
-
-```bash
-cd "$(npm root -g)/zlibrary-mcp"
-curl -LsSf https://astral.sh/uv/install.sh | sh  # Install UV if needed
+npm install -g @gjjisadog/zlibrary-mcp
+cd "$(npm root -g)/@gjjisadog/zlibrary-mcp"
 bash setup-uv.sh
 ```
 
-The package ships the complete Python bridge (`lib/`, the vendored `zlibrary/`
-fork, `pyproject.toml`, `uv.lock`), so no clone is needed. Since v1.3.0 the
-release workflow verifies the tag against `package.json` and publishes with
-provenance, so the registry version tracks GitHub releases; if
-`npm view zlibrary-mcp version` ever trails the
-[latest upstream release](https://github.com/rookslog/zlibrary-mcp/releases), that is a
-release-pipeline bug worth filing.
+The CLI command remains `zlibrary-mcp`. This package includes the Python bridge,
+vendor library and locked dependencies. Release setup is described in
+[Publishing](docs/publishing.md).
 
 ### Option B: From Source (for development)
 
@@ -214,7 +204,7 @@ Upstream images are published to GHCR on every upstream release (`latest`, `1.3`
 `1.3.2`, …) — no clone or build needed:
 
 ```bash
-docker run -d --name zlibrary-mcp -p 8000:8000 \
+docker run -d --name zlibrary-mcp -p 127.0.0.1:8000:8000 \
   -e ZLIBRARY_EMAIL="your-email@example.com" \
   -e ZLIBRARY_PASSWORD="your-password" \
   -v "$PWD/downloads:/app/downloads" \
@@ -271,6 +261,13 @@ The RAG pipeline processes downloaded documents (EPUB, PDF, TXT) into clean text
 Use `download_book_to_file` with `process_for_rag: true` for combined download and processing, or `process_document_for_rag` to process an existing file.
 
 ## Configuration
+
+Each Node service reuses authenticated account sessions in memory for up to ten minutes.
+A lightweight profile request validates a cached session; expiry or rejection triggers
+login again. Password or pinned-domain changes invalidate the cache. Restarting the
+service clears it. Session tokens are never stored in the account preference file or
+returned to MCP clients. Python calls have a total deadline of 180 seconds, configurable
+with `PYTHON_BRIDGE_TIMEOUT_MS`; request cancellation stops the worker process tree.
 
 Z-Library tools use credentials supplied through your MCP client's environment.
 Other sources and local document processing do not require Z-Library credentials.

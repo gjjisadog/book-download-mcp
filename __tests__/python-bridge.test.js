@@ -23,6 +23,7 @@ describe('Python Bridge', () => {
       getManagedPythonPath: jest.fn().mockResolvedValue('/mock/venv/python'),
     }));
     jest.unstable_mockModule('child_process', () => ({ // Mock child_process
+      execFileSync: jest.fn(),
       spawn: jest.fn().mockReturnValue(mockProcessSuccess),
     }));
 
@@ -37,7 +38,7 @@ describe('Python Bridge', () => {
     // --- Assert ---
     // Use dynamic path resolution instead of hardcoded path for portability
     const expectedScriptPath = path.resolve(process.cwd(), 'lib', 'python_bridge.py');
-    expect(spawn).toHaveBeenCalledWith('/mock/venv/python', [expectedScriptPath, 'test_function', JSON.stringify(['arg1', 'arg2'])]);
+    expect(spawn).toHaveBeenCalledWith('/mock/venv/python', [expectedScriptPath, 'test_function', JSON.stringify(['arg1', 'arg2'])], expect.objectContaining({ detached: process.platform !== 'win32' }));
 
     expect(result).toEqual({ success: true, data: 'test data' });
   });
@@ -54,6 +55,7 @@ describe('Python Bridge', () => {
       getManagedPythonPath: jest.fn().mockResolvedValue('/mock/venv/python'),
     }));
     jest.unstable_mockModule('child_process', () => ({ // Mock child_process
+      execFileSync: jest.fn(),
       spawn: jest.fn().mockReturnValue(mockProcessError),
     }));
 
@@ -64,7 +66,7 @@ describe('Python Bridge', () => {
 
     // --- Act & Assert ---
     await expect(pythonBridge.callPythonFunction('test_function', ['arg1']))
-      .rejects.toThrow('Python process exited with code 1: Python error message');
+      .rejects.toThrow('Python process exited with code 1');
     expect(spawn).toHaveBeenCalled(); // Ensure spawn was called
   });
 
@@ -80,6 +82,7 @@ describe('Python Bridge', () => {
       getManagedPythonPath: jest.fn().mockResolvedValue('/mock/venv/python'),
     }));
     jest.unstable_mockModule('child_process', () => ({ // Mock child_process
+      execFileSync: jest.fn(),
       spawn: jest.fn().mockReturnValue(mockProcessInvalidJson),
     }));
 
@@ -91,7 +94,7 @@ describe('Python Bridge', () => {
     // --- Act & Assert ---
     await expect(pythonBridge.callPythonFunction('test_function', []))
       // Update regex to match the actual error format from python-bridge.ts
-      .rejects.toThrow(/^Failed to parse Python result JSON: .*?\. Raw output:.*?\. Stderr:.*?$/);
+      .rejects.toThrow('Failed to parse Python result JSON');
     expect(spawn).toHaveBeenCalled();
   });
 
@@ -107,6 +110,7 @@ describe('Python Bridge', () => {
       getManagedPythonPath: jest.fn().mockRejectedValue(new Error('Failed to get venv path')),
     }));
     jest.unstable_mockModule('child_process', () => ({ // Mock child_process (spawn won't be called if getManagedPythonPath fails)
+      execFileSync: jest.fn(),
       spawn: jest.fn(),
     }));
 

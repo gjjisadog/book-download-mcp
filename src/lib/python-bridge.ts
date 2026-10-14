@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { runPythonBridge } from './bridge-runner.js';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync } from 'fs';
@@ -15,7 +15,10 @@ const __dirname = path.dirname(__filename);
  * @returns Promise resolving with the result from the Python function.
  * @throws {Error} If the Python process fails or returns an error.
  */
-export async function callPythonFunction(functionName: string, args: Record<string, any> = {}): Promise<any> {
+export async function callPythonFunction(
+  functionName: string,
+  args: Record<string, any> = {},
+): Promise<any> {
   // Await async setup before creating the Promise (avoids async promise executor)
   const pythonExecutable = await getManagedPythonPath();
 
@@ -28,56 +31,22 @@ export async function callPythonFunction(functionName: string, args: Record<stri
   if (!existsSync(scriptPath)) {
     throw new Error(
       `Python bridge script not found at: ${scriptPath}\n` +
-      `This usually indicates a build or installation issue.\n` +
-      `Expected location: <project_root>/lib/python_bridge.py`
+        `This usually indicates a build or installation issue.\n` +
+        `Expected location: <project_root>/lib/python_bridge.py`,
     );
   }
 
   // Serialize arguments as JSON
   const serializedArgs = JSON.stringify(args);
 
-  return new Promise((resolve, reject) => {
-    // Spawn Python process using the venv Python
-    const pythonProcess = spawn(pythonExecutable, [
-      scriptPath,
-      functionName,
-      serializedArgs
-    ]);
-
-    let result = '';
-    let errorOutput = '';
-
-    // Collect output
-    if (pythonProcess.stdout) {
-      pythonProcess.stdout.on('data', (data) => {
-        result += data.toString();
-      });
-    }
-
-    if (pythonProcess.stderr) {
-      pythonProcess.stderr.on('data', (data) => {
-        errorOutput += data.toString();
-      });
-    }
-
-    // Handle process completion
-    pythonProcess.on('close', (code) => {
-      if (code === 0) {
-        try {
-          // Parse the JSON result
-          const parsedResult = JSON.parse(result);
-          resolve(parsedResult);
-        } catch (e: any) {
-          // If parsing fails, reject with potentially useful raw output
-          reject(new Error(`Failed to parse Python result JSON: ${e.message}. Raw output: ${result}. Stderr: ${errorOutput}`));
-        }
-      } else {
-        reject(new Error(`Python process exited with code ${code}: ${errorOutput}. Raw stdout: ${result}`));
-      }
-    });
-
-    pythonProcess.on('error', (err) => {
-      reject(new Error(`Failed to start Python process: ${err.message}`));
-    });
+  const lines = await runPythonBridge(path.basename(scriptPath), {
+    pythonPath: pythonExecutable,
+    scriptPath: path.dirname(scriptPath),
+    args: [functionName, serializedArgs],
   });
+  try {
+    return JSON.parse(lines.join('\n'));
+  } catch {
+    throw new Error('Failed to parse Python result JSON');
+  }
 }
