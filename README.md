@@ -1,9 +1,9 @@
-# Z-Library MCP Server
+# BookHarbor MCP
 
-[![CI](https://github.com/gjjisadog/zlibrary-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/gjjisadog/zlibrary-mcp/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/github/license/gjjisadog/zlibrary-mcp)](https://github.com/gjjisadog/zlibrary-mcp/blob/main/LICENSE)
+[![CI](https://github.com/gjjisadog/bookharbor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/gjjisadog/bookharbor-mcp/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/gjjisadog/bookharbor-mcp)](https://github.com/gjjisadog/bookharbor-mcp/blob/main/LICENSE)
 
-This independent development repository is based on
+BookHarbor MCP is an independent development project based on
 [rookslog/zlibrary-mcp v1.4.0](https://github.com/rookslog/zlibrary-mcp/tree/v1.4.0)
 and adds a configurable account pool with automatic failover on rejected login
 or exhausted download quota. The upstream history and MIT license are preserved.
@@ -20,8 +20,8 @@ For what this project is — and deliberately isn't — see [VISION.md](VISION.m
 (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 
 ```bash
-git clone https://github.com/gjjisadog/zlibrary-mcp.git
-cd zlibrary-mcp
+git clone https://github.com/gjjisadog/bookharbor-mcp.git
+cd bookharbor-mcp
 bash setup-uv.sh
 npm ci
 npm run build
@@ -32,9 +32,9 @@ Then add to your MCP client config (Claude Code `.mcp.json`, Claude Desktop `cla
 ```json
 {
   "mcpServers": {
-    "zlibrary": {
+    "bookharbor": {
       "command": "node",
-      "args": ["/absolute/path/to/zlibrary-mcp/dist/index.js"],
+      "args": ["/absolute/path/to/bookharbor-mcp/dist/index.js"],
       "env": {
         "ZLIBRARY_ACCOUNTS": "[{\"email\":\"first@example.com\",\"password\":\"first_password\"},{\"email\":\"second@example.com\",\"password\":\"second_password\"}]"
       }
@@ -136,7 +136,7 @@ cd "$(npm root -g)/@gjjisadog/zlibrary-mcp"
 bash setup-uv.sh
 ```
 
-The CLI command remains `zlibrary-mcp`. This package includes the Python bridge,
+The repository and display name are BookHarbor MCP; the npm package and CLI command remain `@gjjisadog/zlibrary-mcp` and `zlibrary-mcp`. This package includes the Python bridge,
 vendor library and locked dependencies. Release setup is described in
 [Publishing](docs/publishing.md).
 
@@ -149,8 +149,8 @@ vendor library and locked dependencies. Release setup is described in
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # 2. Clone and build
-git clone https://github.com/gjjisadog/zlibrary-mcp.git
-cd zlibrary-mcp
+git clone https://github.com/gjjisadog/bookharbor-mcp.git
+cd bookharbor-mcp
 git lfs pull         # Hydrates LFS-tracked test PDFs (don't run `git lfs install`;
                      # it conflicts with the repo's Husky-managed hooks)
 bash setup-uv.sh    # Creates .venv/ and installs Python dependencies
@@ -165,9 +165,9 @@ Claude Code (`.mcp.json` in your project root):
 ```json
 {
   "mcpServers": {
-    "zlibrary": {
+    "bookharbor": {
       "command": "node",
-      "args": ["/absolute/path/to/zlibrary-mcp/dist/index.js"],
+      "args": ["/absolute/path/to/bookharbor-mcp/dist/index.js"],
       "env": {
         "ZLIBRARY_EMAIL": "your-email@example.com",
         "ZLIBRARY_PASSWORD": "your-password"
@@ -184,7 +184,7 @@ RooCode / Cline (`mcp_settings.json`):
   "mcpServers": {
     "zlibrary-local": {
       "command": "node",
-      "args": ["/absolute/path/to/zlibrary-mcp/dist/index.js"],
+      "args": ["/absolute/path/to/bookharbor-mcp/dist/index.js"],
       "env": {
         "ZLIBRARY_EMAIL": "your-email@example.com",
         "ZLIBRARY_PASSWORD": "your-password"
@@ -228,7 +228,7 @@ curl -s -N --max-time 3 http://localhost:8000/sse | head -2
 (adds a `/health` endpoint via compose):
 
 ```bash
-git clone https://github.com/gjjisadog/zlibrary-mcp.git && cd zlibrary-mcp
+git clone https://github.com/gjjisadog/bookharbor-mcp.git && cd bookharbor-mcp
 cp docker/env.example docker/.env   # then edit in your credentials
 docker compose -f docker/docker-compose.yaml up -d
 curl http://localhost:8000/health
@@ -239,7 +239,7 @@ curl http://localhost:8000/health
 ```json
 {
   "mcpServers": {
-    "zlibrary": {
+    "bookharbor": {
       "command": "npx",
       "args": ["-y", "supergateway", "--sse", "http://localhost:8000/sse"]
     }

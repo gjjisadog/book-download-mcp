@@ -1,6 +1,6 @@
-# Docker Deployment
+# BookHarbor MCP Docker Deployment
 
-Run Z-Library MCP server in a Docker container with HTTP transport via [SuperGateway](https://github.com/supercorp-ai/supergateway).
+Run BookHarbor MCP in a Docker container with HTTP transport via [SuperGateway](https://github.com/supercorp-ai/supergateway).
 
 ## Quick Start
 

@@ -1,7 +1,7 @@
-# Independent releases
+# BookHarbor MCP releases
 
 Package: `@gjjisadog/zlibrary-mcp`; next version: `1.4.1`.
-Repository: https://github.com/gjjisadog/zlibrary-mcp
+Repository: https://github.com/gjjisadog/bookharbor-mcp
 Workflow: `.github/workflows/publish.yml` (npm job uses Node 22 and npm 11 OIDC).
 The CLI remains `zlibrary-mcp`. Keep `package.json`, `package-lock.json`,
 `pyproject.toml` and `uv.lock` versions aligned.
@@ -18,7 +18,7 @@ package public. No npm publication is performed by this repository setup.
 On the package's npm settings page, configure a GitHub Actions trusted publisher:
 
 - Organization/user: `gjjisadog`
-- Repository: `zlibrary-mcp`
+- Repository: `bookharbor-mcp`
 - Workflow filename: `publish.yml`
 - Environment: leave empty (the current job specifies none)
 - Allowed actions: enable direct `npm publish`

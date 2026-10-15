@@ -1,4 +1,4 @@
-# Z-Library MCP Server Docker Image
+# BookHarbor MCP Docker Image
 # Multi-stage build for minimal runtime image
 #
 # Build from project root:

@@ -1,4 +1,4 @@
-# Contributing to Z-Library MCP Server
+# Contributing to BookHarbor MCP
 
 Thank you for your interest in contributing! This guide covers everything you need to get started.
 
@@ -18,8 +18,8 @@ Thank you for your interest in contributing! This guide covers everything you ne
 ### Clone and Setup
 
 ```bash
-git clone https://github.com/loganrooks/zlibrary-mcp.git
-cd zlibrary-mcp
+git clone https://github.com/gjjisadog/bookharbor-mcp.git
+cd bookharbor-mcp
 
 # Hydrate LFS-tracked test fixtures (no `git lfs install` needed -- see Prerequisites)
 git lfs pull
@@ -251,7 +251,7 @@ For detailed patterns, see the project's internal documentation in `.claude/PATT
 
 ## Reporting Issues
 
-Use [GitHub Issues](https://github.com/loganrooks/zlibrary-mcp/issues) to report bugs or request features.
+Use [GitHub Issues](https://github.com/gjjisadog/bookharbor-mcp/issues) to report bugs or request features.
 
 Include:
 - Node.js version (`node --version`)

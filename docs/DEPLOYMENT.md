@@ -44,11 +44,11 @@ npm start
 
 #### 2. **Development with npm link**
 ```bash
-cd /path/to/zlibrary-mcp
+cd /path/to/bookharbor-mcp
 npm link
 
 cd /path/to/your-project
-npm link zlibrary-mcp
+npm link @gjjisadog/zlibrary-mcp
 ```
 
 **Path Resolution**: ✅ Works
@@ -59,8 +59,8 @@ npm link zlibrary-mcp
 
 #### 3. **Clone and Build**
 ```bash
-git clone https://github.com/loganrooks/zlibrary-mcp.git
-cd zlibrary-mcp
+git clone https://github.com/gjjisadog/bookharbor-mcp.git
+cd bookharbor-mcp
 npm install
 npm run build
 node dist/index.js
@@ -157,7 +157,7 @@ zlibrary-mcp
 Project or lib/ directory is a symbolic link.
 
 ```bash
-ln -s /real/path/to/zlibrary-mcp /symlink/zlibrary-mcp
+ln -s /real/path/to/bookharbor-mcp /symlink/zlibrary-mcp
 cd /symlink/zlibrary-mcp
 npm start
 ```

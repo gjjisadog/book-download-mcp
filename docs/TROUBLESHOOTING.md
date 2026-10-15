@@ -140,9 +140,9 @@ optional failures usually mean a secondary source is unreachable.
 ```json
 {
   "mcpServers": {
-    "zlibrary": {
+    "bookharbor": {
       "command": "node",
-      "args": ["/absolute/path/to/zlibrary-mcp/dist/index.js"],
+      "args": ["/absolute/path/to/bookharbor-mcp/dist/index.js"],
       "env": {
         "ZLIBRARY_EMAIL": "your-email@example.com",
         "ZLIBRARY_PASSWORD": "your-password"
