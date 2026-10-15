@@ -22,6 +22,9 @@ const projectRoot = resolve(__dirname, '..');
 const requiredPythonFiles = [
   { path: 'lib/python_bridge.py', critical: true, description: 'Main Python bridge script' },
   { path: 'lib/account_pool.py', critical: true, description: 'Z-Library account pool' },
+  { path: 'lib/logging_utils.py', critical: true, description: 'Private diagnostics' },
+  { path: 'lib/bridge_errors.py', critical: true, description: 'Structured bridge errors' },
+  { path: 'lib/session_cache.py', critical: true, description: 'Short-lived account sessions' },
   { path: 'lib/rag_processing.py', critical: true, description: 'RAG document processing' },
   { path: 'lib/enhanced_metadata.py', critical: true, description: 'Enhanced metadata extraction' },
   { path: 'lib/author_tools.py', critical: false, description: 'Author-specific search tools' },
@@ -34,6 +37,8 @@ const requiredPythonFiles = [
 const requiredCompiledFiles = [
   { path: 'dist/index.js', critical: true, description: 'Main MCP server entry point' },
   { path: 'dist/lib/python-bridge.js', critical: true, description: 'Python bridge TypeScript wrapper' },
+  { path: 'dist/lib/bridge-runner.js', critical: true, description: 'Bounded Python worker execution' },
+  { path: 'dist/lib/session-cache.js', critical: true, description: 'Private session transport' },
   { path: 'dist/lib/zlibrary-api.js', critical: true, description: 'Z-Library API wrapper' },
   { path: 'dist/lib/venv-manager.js', critical: true, description: 'Python venv management' }
 ];

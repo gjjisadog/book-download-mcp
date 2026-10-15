@@ -2,13 +2,13 @@
 
 ## Supported versions
 
-Only the latest release line receives fixes. Check [releases](https://github.com/loganrooks/zlibrary-mcp/releases)
+Only the latest release line receives fixes. Check [releases](https://github.com/gjjisadog/zlibrary-mcp/releases)
 for the current version.
 
 ## Reporting a vulnerability
 
 Report privately through
-[GitHub Security Advisories](https://github.com/loganrooks/zlibrary-mcp/security/advisories/new)
+[GitHub Security Advisories](https://github.com/gjjisadog/zlibrary-mcp/security/advisories/new)
 rather than opening a public issue. Include reproduction steps and the version
 you tested. Expect an initial response within a week.
 
@@ -18,7 +18,7 @@ you tested. Expect an initial response within a week.
 only to authenticate against Z-Library. Two things worth knowing:
 
 - **Credentials are passed to the Python bridge as a subprocess environment.**
-  They are never written to the RAG output bundle or the debug log.
+  They are never written to the RAG output bundle or a debug file. Short-lived session cookies are kept in the Node service memory and passed privately to Python; they are stripped from tool responses. Account preference files contain only a pool fingerprint and index.
 - **`LOG_LEVEL=debug` echoes search arguments to stderr**, and MCP clients
   capture stderr into their own logs. Do not enable it when your queries are
   sensitive, and scrub client logs before attaching them to a bug report. At the

@@ -24,7 +24,7 @@ describe('Path Resolution Helpers', () => {
 
       expect(root).toBeTruthy();
       expect(path.isAbsolute(root)).toBe(true);
-      expect(root).toContain('zlibrary-mcp');
+      expect(existsSync(path.join(root, 'package.json'))).toBe(true);
     });
 
     test('project root should contain package.json', () => {
@@ -113,7 +113,7 @@ describe('Path Resolution Helpers', () => {
       const content = readFileSync(pkgPath, 'utf8');
       const pkg = JSON.parse(content);
 
-      expect(pkg.name).toBe('zlibrary-mcp');
+      expect(pkg.name).toBe('@gjjisadog/zlibrary-mcp');
       expect(pkg.version).toBeTruthy();
     });
   });

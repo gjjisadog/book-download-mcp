@@ -1,8 +1,7 @@
-import type { Options as PythonShellOptions } from 'python-shell';
-import { PythonShell } from 'python-shell';
+import type { BridgeOptions } from './bridge-runner.js';
+import { runPythonBridge } from './bridge-runner.js';
 import * as path from 'path';
 import { getManagedPythonPath } from './venv-manager.js'; // Import ESM style
-import { appendFile as appendFileAsyncFS, mkdir as mkdirAsyncFS } from 'fs/promises'; // Import fs/promises for async file operations, aliased
 // Removed unused https, http imports
 // path is already imported on line 2
 import { fileURLToPath } from 'url';
@@ -21,14 +20,27 @@ const __dirname = path.dirname(__filename);
 const BRIDGE_SCRIPT_PATH = path.resolve(__dirname, '..', '..', 'lib');
 const BRIDGE_SCRIPT_NAME = 'python_bridge.py';
 
-// Create a circuit breaker for all Python bridge operations
-const pythonBridgeCircuitBreaker = new CircuitBreaker({
-  threshold: parseInt(process.env.CIRCUIT_BREAKER_THRESHOLD || '5'),
-  timeout: parseInt(process.env.CIRCUIT_BREAKER_TIMEOUT || '60000'),
-  onStateChange: (oldState, newState) => {
-    logger.info(`Python bridge circuit breaker: ${oldState} -> ${newState}`);
-  }
-});
+// Providers fail independently; document processing uses no remote breaker.
+const breakers = new Map<string, CircuitBreaker>();
+function getBreaker(functionName: string, args: Record<string, any>): CircuitBreaker | undefined {
+  if (functionName === 'process_document') return undefined;
+  let source = 'zlibrary';
+  // Auto routing can use a healthy fallback even while the primary is open.
+  if (functionName === 'search_multi_source' && args.source === 'auto') return undefined;
+  if (functionName === 'search_multi_source') source = args.source;
+  if (functionName === 'download_book') source = args.book_details?.source || 'zlibrary';
+  if (source === 'annas_archive') source = 'annas';
+  if (!breakers.has(source))
+    breakers.set(
+      source,
+      new CircuitBreaker({
+        threshold: parseInt(process.env.CIRCUIT_BREAKER_THRESHOLD || '5'),
+        timeout: parseInt(process.env.CIRCUIT_BREAKER_TIMEOUT || '60000'),
+        isFailure: isRetryableError,
+      }),
+    );
+  return breakers.get(source);
+}
 
 /**
  * Execute a Python function from the Z-Library repository
@@ -37,34 +49,32 @@ const pythonBridgeCircuitBreaker = new CircuitBreaker({
  * @returns Promise resolving with the result from the Python function
  * @throws {ZLibraryError} If the Python process fails or returns an error.
  */
-async function callPythonFunction(functionName: string, args: Record<string, any> = {}): Promise<any> {
+async function callPythonFunction(
+  functionName: string,
+  args: Record<string, any> = {},
+): Promise<any> {
   // Wrap the entire operation with retry logic and circuit breaker
   return withRetry(
     async () => {
-      return pythonBridgeCircuitBreaker.execute(async () => {
+      const operation = async () => {
         try {
           // Get the python path asynchronously INSIDE the try block
           const venvPythonPath = await getManagedPythonPath();
           // Serialize arguments as JSON *before* creating options
           const serializedArgs = JSON.stringify(args);
-          const options: PythonShellOptions = {
+          const options: BridgeOptions = {
             mode: 'text', // Revert back to text mode
             pythonPath: venvPythonPath, // Use the Python from our managed venv
             scriptPath: BRIDGE_SCRIPT_PATH, // Use the calculated path to the source lib dir
-            args: [functionName, serializedArgs] // Pass serialized string directly
+            args: [functionName, serializedArgs], // Pass serialized string directly
           };
 
-          // PythonShell.run call is already inside the try block (from line 33 in original)
-          // PythonShell.run returns Promise<string[] | undefined>
-          // We expect JSON, so results[0] should be the JSON string if successful
-          // PythonShell with mode: 'json' should return an array of parsed JSON objects (or throw an error)
-          const results = await PythonShell.run(BRIDGE_SCRIPT_NAME, options); // results will be string[] | undefined
+          const results = await runPythonBridge(BRIDGE_SCRIPT_NAME, options);
 
           // Check if results exist and contain at least one element
           if (!results || results.length === 0) {
             throw new PythonBridgeError(`No output received from Python script.`, {
               functionName,
-              args
             });
           }
 
@@ -77,17 +87,22 @@ async function callPythonFunction(functionName: string, args: Record<string, any
           } catch (parseError: any) {
             throw new PythonBridgeError(
               `Failed to parse initial JSON output from Python script: ${parseError.message}`,
-              { functionName, args, rawOutput: stdoutString },
-              false // Parse errors are not retryable
+              { functionName },
+              false, // Parse errors are not retryable
             );
           }
 
           // Validate the MCP response structure and extract the nested JSON string
-          if (!mcpResponseData || !Array.isArray(mcpResponseData.content) || mcpResponseData.content.length === 0 || typeof mcpResponseData.content[0].text !== 'string') {
+          if (
+            !mcpResponseData ||
+            !Array.isArray(mcpResponseData.content) ||
+            mcpResponseData.content.length === 0 ||
+            typeof mcpResponseData.content[0].text !== 'string'
+          ) {
             throw new PythonBridgeError(
               `Invalid MCP response structure received from Python script.`,
-              { functionName, args, rawOutput: stdoutString },
-              false // Structure errors are not retryable
+              { functionName },
+              false, // Structure errors are not retryable
             );
           }
 
@@ -99,16 +114,22 @@ async function callPythonFunction(functionName: string, args: Record<string, any
           } catch (parseError: any) {
             throw new PythonBridgeError(
               `Failed to parse nested JSON result from Python script: ${parseError.message}`,
-              { functionName, args, nestedString: nestedJsonString },
-              false // Parse errors are not retryable
+              { functionName },
+              false, // Parse errors are not retryable
             );
           }
 
           // Check if the *actual* Python result contained an error structure
-          if (resultData && typeof resultData === 'object' && 'error' in resultData && resultData.error) {
+          if (
+            resultData &&
+            typeof resultData === 'object' &&
+            'error' in resultData &&
+            resultData.error
+          ) {
             throw new PythonBridgeError(
               `Python bridge execution failed for ${functionName}: ${resultData.error}`,
-              { functionName, args }
+              { functionName },
+              false,
             );
           }
 
@@ -116,73 +137,69 @@ async function callPythonFunction(functionName: string, args: Record<string, any
           return resultData;
         } catch (err: any) {
           // Log the full error object from python-shell
-          console.error(`[callPythonFunction Error - ${functionName}] Raw error object:`, err);
+          logger.error(`Python bridge failed (${functionName})`, {
+            code: err.code || 'PYTHON_ERROR',
+          });
 
           // If it's already a ZLibraryError, just rethrow
           if (err instanceof ZLibraryError) {
             throw err;
           }
 
-          // Capture stderr if available
-          const stderrOutput = err.stderr ? ` Stderr: ${err.stderr}` : '';
-
-          // Wrap in PythonBridgeError with context
           throw new PythonBridgeError(
-            `Python bridge execution failed for ${functionName}: ${err.message || err}.${stderrOutput}`,
-            {
-              functionName,
-              args,
-              stderr: err.stderr,
-              originalError: err
-            }
+            `Python bridge execution failed for ${functionName}`,
+            { functionName },
+            false,
           );
         }
-      });
+      };
+      const breaker = getBreaker(functionName, args);
+      return breaker ? breaker.execute(operation) : operation();
     },
     {
       maxRetries: parseInt(process.env.RETRY_MAX_RETRIES || '3'),
       initialDelay: parseInt(process.env.RETRY_INITIAL_DELAY || '1000'),
       maxDelay: parseInt(process.env.RETRY_MAX_DELAY || '30000'),
       factor: parseFloat(process.env.RETRY_FACTOR || '2'),
-      shouldRetry: isRetryableError
-    }
+      shouldRetry: isRetryableError,
+    },
   );
 }
 
 // Define interfaces for function arguments for better type safety
 
 interface SearchBooksArgs {
-    query: string;
-    exact?: boolean;
-    fromYear?: number | null;
-    toYear?: number | null;
-    languages?: string[];
-    extensions?: string[];
-    content_types?: string[];
-    count?: number;
+  query: string;
+  exact?: boolean;
+  fromYear?: number | null;
+  toYear?: number | null;
+  languages?: string[];
+  extensions?: string[];
+  content_types?: string[];
+  count?: number;
 }
 
 interface FullTextSearchArgs extends SearchBooksArgs {
-    phrase?: boolean;
-    words?: boolean;
+  phrase?: boolean;
+  words?: boolean;
 }
 
 interface GetDownloadHistoryArgs {
-    count?: number;
+  count?: number;
 }
 
 interface DownloadBookToFileArgs {
-    // id: string; // Replaced by bookDetails
-    // format?: string | null; // Replaced by bookDetails
-    bookDetails: Record<string, any>; // Expect the full book details object
-    outputDir?: string;
-    process_for_rag?: boolean;
-    processed_output_format?: string;
+  // id: string; // Replaced by bookDetails
+  // format?: string | null; // Replaced by bookDetails
+  bookDetails: Record<string, any>; // Expect the full book details object
+  outputDir?: string;
+  process_for_rag?: boolean;
+  processed_output_format?: string;
 }
 
 interface ProcessDocumentForRagArgs {
-    filePath: string;
-    outputFormat?: string;
+  filePath: string;
+  outputFormat?: string;
 }
 
 interface ProcessedDocumentStats {
@@ -212,18 +229,22 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 function isStringRecord(value: unknown): value is Record<string, string> {
-  return Boolean(value)
-    && typeof value === 'object'
-    && !Array.isArray(value)
-    && Object.values(value as Record<string, unknown>).every((item) => typeof item === 'string');
+  return (
+    Boolean(value) &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.values(value as Record<string, unknown>).every((item) => typeof item === 'string')
+  );
 }
 
 function isProcessedDocumentStats(value: unknown): value is ProcessedDocumentStats {
-  return Boolean(value)
-    && typeof value === 'object'
-    && typeof (value as ProcessedDocumentStats).word_count === 'number'
-    && typeof (value as ProcessedDocumentStats).char_count === 'number'
-    && typeof (value as ProcessedDocumentStats).format === 'string';
+  return (
+    Boolean(value) &&
+    typeof value === 'object' &&
+    typeof (value as ProcessedDocumentStats).word_count === 'number' &&
+    typeof (value as ProcessedDocumentStats).char_count === 'number' &&
+    typeof (value as ProcessedDocumentStats).format === 'string'
+  );
 }
 
 function validateNullablePathField(result: Record<string, any>, fieldName: string): void {
@@ -244,7 +265,9 @@ function validateStructuredDocumentBundle(
     throw new Error('Invalid response from Python bridge: Expected an object.');
   }
   if (requireProcessedFilePath && !('processed_file_path' in result)) {
-    throw new Error('Invalid response from Python bridge during processing. Missing processed_file_path key.');
+    throw new Error(
+      'Invalid response from Python bridge during processing. Missing processed_file_path key.',
+    );
   }
   validateNullablePathField(result, 'processed_file_path');
   validateNullablePathField(result, 'metadata_file_path');
@@ -253,16 +276,21 @@ function validateStructuredDocumentBundle(
   validateNullablePathField(result, 'citations_file_path');
 
   if ('content_types_produced' in result && !isStringArray(result.content_types_produced)) {
-    throw new Error('Invalid response from Python bridge: content_types_produced must be an array of strings.');
+    throw new Error(
+      'Invalid response from Python bridge: content_types_produced must be an array of strings.',
+    );
   }
   if ('output_files' in result && !isStringRecord(result.output_files)) {
-    throw new Error('Invalid response from Python bridge: output_files must be an object of string paths.');
+    throw new Error(
+      'Invalid response from Python bridge: output_files must be an object of string paths.',
+    );
   }
   if ('stats' in result && result.stats !== null && !isProcessedDocumentStats(result.stats)) {
-    throw new Error('Invalid response from Python bridge: stats must include word_count, char_count, and format.');
+    throw new Error(
+      'Invalid response from Python bridge: stats must include word_count, char_count, and format.',
+    );
   }
 }
-
 
 /**
  * Search for books in Z-Library
@@ -275,7 +303,7 @@ export async function searchBooks({
   languages = [],
   extensions = [],
   content_types = [],
-  count = 10
+  count = 10,
 }: SearchBooksArgs): Promise<any> {
   // Pass arguments as an object matching Python function signature
   // Python bridge main() expects 'language' (singular) and 'content_types'
@@ -287,16 +315,11 @@ export async function searchBooks({
     languages: languages,
     extensions: extensions,
     content_types: content_types,
-    count: count
+    count: count,
   };
   // Moved logging to after pythonArgs is defined
   const searchBooksPythonArgsLog = `[${new Date().toISOString()}] Node.js searchBooks: Sending to callPythonFunction: ${JSON.stringify(pythonArgs)}\n`;
   logger.debug(searchBooksPythonArgsLog.trim());
-  try {
-    const logFilePath = path.resolve(__dirname, '..', '..', 'logs', 'nodejs_debug.log');
-    await mkdirAsyncFS(path.dirname(logFilePath), { recursive: true });
-    await appendFileAsyncFS(logFilePath, searchBooksPythonArgsLog);
-  } catch (e) { console.error('Failed to write to logs/nodejs_debug.log', e); }
   return await callPythonFunction('search', pythonArgs);
 }
 /**
@@ -310,7 +333,7 @@ export async function fullTextSearch({
   languages = [],
   extensions = [],
   content_types = [],
-  count = 10
+  count = 10,
 }: FullTextSearchArgs): Promise<any> {
   // Pass arguments as an object matching Python function signature
   // Python bridge main() expects 'language' (singular) and 'content_types'
@@ -322,16 +345,11 @@ export async function fullTextSearch({
     languages: languages,
     extensions: extensions,
     content_types: content_types,
-    count: count
+    count: count,
   };
   // Moved logging to after pythonArgsFTS is defined
   const ftsPythonArgsLog = `[${new Date().toISOString()}] Node.js fullTextSearch: Sending to callPythonFunction: ${JSON.stringify(pythonArgsFTS)}\n`;
   logger.debug(ftsPythonArgsLog.trim());
-  try {
-    const logFilePath = path.resolve(__dirname, '..', '..', 'logs', 'nodejs_debug.log');
-    await mkdirAsyncFS(path.dirname(logFilePath), { recursive: true });
-    await appendFileAsyncFS(logFilePath, ftsPythonArgsLog);
-  } catch (e) { console.error('Failed to write to logs/nodejs_debug.log', e); }
   return await callPythonFunction('full_text_search', pythonArgsFTS);
 }
 
@@ -351,7 +369,6 @@ export async function getDownloadLimits(): Promise<any> {
   return await callPythonFunction('get_download_limits', {});
 }
 
-
 /**
  * Process a downloaded document for RAG
  */
@@ -360,17 +377,20 @@ export async function processDocumentForRag({
   outputFormat = 'txt',
 }: ProcessDocumentForRagArgs): Promise<ProcessedDocumentBundle> {
   if (!filePath) {
-    throw new Error("Missing required argument: filePath");
+    throw new Error('Missing required argument: filePath');
   }
   logger.debug(`Calling Python bridge to process document: ${filePath}`);
   // Ensure the file path is absolute or correctly relative for the Python script
   const absoluteFilePath = path.resolve(filePath);
   // Pass arguments as an object matching Python function signature
-  const result = await callPythonFunction('process_document', { file_path_str: absoluteFilePath, output_format: outputFormat });
+  const result = await callPythonFunction('process_document', {
+    file_path_str: absoluteFilePath,
+    output_format: outputFormat,
+  });
 
   // Check if the Python script returned an error structure
   if (result && result.error) {
-      throw new Error(`Python processing failed: ${result.error}`);
+    throw new Error(`Python processing failed: ${result.error}`);
   }
 
   validateStructuredDocumentBundle(result, { requireProcessedFilePath: true });
@@ -383,55 +403,65 @@ export async function processDocumentForRag({
  * Download a book directly to a file
  */
 export async function downloadBookToFile({
-    // id, // Replaced by bookDetails
-    // format = null, // Replaced by bookDetails
-    bookDetails, // Use bookDetails object
-    outputDir = './downloads',
-    process_for_rag = false,
-    processed_output_format = 'txt'
+  // id, // Replaced by bookDetails
+  // format = null, // Replaced by bookDetails
+  bookDetails, // Use bookDetails object
+  outputDir = './downloads',
+  process_for_rag = false,
+  processed_output_format = 'txt',
 }: DownloadBookToFileArgs): Promise<DownloadBookResult> {
   try {
     // Call the Python function, passing the bookDetails object
     const result = await callPythonFunction('download_book', {
-        book_details: bookDetails, // Pass the whole object
-        // book_id: id, // Removed
-        // format: format, // Removed
-        output_dir: outputDir,
-        process_for_rag: process_for_rag,
-        processed_output_format: processed_output_format
+      book_details: bookDetails, // Pass the whole object
+      // book_id: id, // Removed
+      // format: format, // Removed
+      output_dir: outputDir,
+      process_for_rag: process_for_rag,
+      processed_output_format: processed_output_format,
     });
 
     // Check if the Python script returned an error structure
     if (result && result.error) {
-        throw new Error(`Python download/processing failed: ${result.error}`);
+      throw new Error(`Python download/processing failed: ${result.error}`);
     }
 
     // Validate the response structure
-    if (!result || !result.file_path) { // Compat check
-        throw new Error("Invalid response from Python bridge: Missing original file_path.");
+    if (!result || !result.file_path) {
+      // Compat check
+      throw new Error('Invalid response from Python bridge: Missing original file_path.');
     }
 
     if (typeof result.file_path !== 'string') {
-        throw new Error("Invalid response from Python bridge: file_path must be a string.");
+      throw new Error('Invalid response from Python bridge: file_path must be a string.');
     }
 
     if (process_for_rag && !('processed_file_path' in result)) {
-        throw new Error("Invalid response from Python bridge: Processing requested but processed_file_path key is missing.");
+      throw new Error(
+        'Invalid response from Python bridge: Processing requested but processed_file_path key is missing.',
+      );
     }
 
     if (process_for_rag || 'processed_file_path' in result) {
-        validateStructuredDocumentBundle(result, { requireProcessedFilePath: false });
+      validateStructuredDocumentBundle(result, { requireProcessedFilePath: false });
     }
 
-    if ('processing_error' in result && typeof result.processing_error !== 'string' && typeof result.processing_error !== 'undefined') {
-        throw new Error('Invalid response from Python bridge: processing_error must be a string when present.');
+    if (
+      'processing_error' in result &&
+      typeof result.processing_error !== 'string' &&
+      typeof result.processing_error !== 'undefined'
+    ) {
+      throw new Error(
+        'Invalid response from Python bridge: processing_error must be a string when present.',
+      );
     }
 
     return result as DownloadBookResult;
-
   } catch (error: any) {
     // Re-throw errors from callPythonFunction or validation checks
-    throw new Error(`Failed to download book: ${error.message || 'Unknown error'}`, { cause: error });
+    throw new Error(`Failed to download book: ${error.message || 'Unknown error'}`, {
+      cause: error,
+    });
   }
 }
 
@@ -441,19 +471,34 @@ export async function downloadBookToFile({
 
 // Core fields always included in metadata response
 const METADATA_CORE_FIELDS = new Set([
-  'id', 'book_hash', 'book_url',
-  'title', 'author', 'authors', 'year', 'publisher', 'language',
-  'pages', 'isbn_10', 'isbn_13', 'rating', 'cover',
-  'url', 'categories', 'extension', 'filesize', 'series',
+  'id',
+  'book_hash',
+  'book_url',
+  'title',
+  'author',
+  'authors',
+  'year',
+  'publisher',
+  'language',
+  'pages',
+  'isbn_10',
+  'isbn_13',
+  'rating',
+  'cover',
+  'url',
+  'categories',
+  'extension',
+  'filesize',
+  'series',
 ]);
 
 // Mapping from include group names to metadata field names
 const METADATA_INCLUDE_MAP: Record<string, string[]> = {
-  'terms': ['terms'],
-  'booklists': ['booklists'],
-  'ipfs': ['ipfs_cids'],
-  'ratings': ['quality_score'],
-  'description': ['description'],
+  terms: ['terms'],
+  booklists: ['booklists'],
+  ipfs: ['ipfs_cids'],
+  ratings: ['quality_score'],
+  description: ['description'],
 };
 
 function filterMetadataResponse(fullMetadata: any, include?: string[]): any {
@@ -485,10 +530,14 @@ function filterMetadataResponse(fullMetadata: any, include?: string[]): any {
   return result;
 }
 
-export async function getBookMetadata(bookId: string, bookHash: string, include?: string[]): Promise<any> {
+export async function getBookMetadata(
+  bookId: string,
+  bookHash: string,
+  include?: string[],
+): Promise<any> {
   const fullMetadata = await callPythonFunction('get_book_metadata_complete', {
     book_id: bookId,
-    book_hash: bookHash
+    book_hash: bookHash,
   });
   return filterMetadataResponse(fullMetadata, include);
 }
@@ -507,7 +556,7 @@ export async function searchByTerm(args: {
     year_to: args.yearTo,
     languages: args.languages,
     extensions: args.extensions,
-    limit: args.limit || 25
+    limit: args.limit || 25,
   });
 }
 
@@ -527,7 +576,7 @@ export async function searchByAuthor(args: {
     year_to: args.yearTo,
     languages: args.languages,
     extensions: args.extensions,
-    limit: args.limit || 25
+    limit: args.limit || 25,
   });
 }
 
@@ -541,7 +590,7 @@ export async function fetchBooklist(args: {
     booklist_id: args.booklistId,
     booklist_hash: args.booklistHash,
     topic: args.topic,
-    page: args.page || 1
+    page: args.page || 1,
   });
 }
 
@@ -557,7 +606,7 @@ export async function searchAdvanced(args: {
     exact: args.exact || false,
     from_year: args.yearFrom,
     to_year: args.yearTo,
-    count: args.count || 10
+    count: args.count || 10,
   });
 }
 
@@ -569,7 +618,7 @@ export async function searchMultiSource(args: {
   return callPythonFunction('search_multi_source', {
     query: args.query,
     source: args.source || 'auto',
-    count: args.count || 10
+    count: args.count || 10,
   });
 }
 

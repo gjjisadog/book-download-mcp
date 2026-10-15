@@ -35,11 +35,7 @@ describe('Z-Library API - Extended Coverage', () => {
       getManagedPythonPath: mockGetManagedPythonPath,
     }));
 
-    jest.unstable_mockModule('python-shell', () => ({
-      PythonShell: {
-        run: mockPythonShellRun,
-      },
-    }));
+    jest.unstable_mockModule('../lib/bridge-runner.js', () => ({ runPythonBridge: mockPythonShellRun }));
 
     // Minimal fs mock (required by module imports)
     jest.unstable_mockModule('fs', () => ({
@@ -484,4 +480,54 @@ describe('Z-Library API - Extended Coverage', () => {
         .rejects.toThrow(/Python bridge execution failed for search_multi_source/);
     });
   });
+  test('authentication failures neither retry nor block the fallback provider', async () => {
+    const { AuthenticationError } = await import('../lib/errors.js');
+    mockGetManagedPythonPath.mockResolvedValue('/fake/python');
+    for (let i = 0; i < 6; i++) {
+      mockPythonShellRun.mockRejectedValueOnce(new AuthenticationError('Credentials missing'));
+      await expect(zlibApi.searchBooks({ query: 'computer network' })).rejects.toMatchObject({ code: 'AUTH_ERROR' });
+    }
+    expect(mockPythonShellRun).toHaveBeenCalledTimes(6);
+    mockPythonShellRun.mockResolvedValueOnce(mockMcpResponse([]));
+    expect(await zlibApi.searchMultiSource({ query: 'book', source: 'libgen' })).toEqual([]);
+  });
+  test('a failed Z-Library circuit leaves LibGen and local processing available', async () => {
+    const { NetworkError } = await import('../lib/errors.js');
+    const oldRetries = process.env.RETRY_MAX_RETRIES;
+    const oldThreshold = process.env.CIRCUIT_BREAKER_THRESHOLD;
+    process.env.RETRY_MAX_RETRIES = '0'; process.env.CIRCUIT_BREAKER_THRESHOLD = '1';
+    try {
+      mockGetManagedPythonPath.mockResolvedValue('/fake/python');
+      mockPythonShellRun.mockRejectedValueOnce(new NetworkError('Unavailable'));
+      await expect(zlibApi.searchBooks({ query: 'book' })).rejects.toMatchObject({ code: 'NETWORK_ERROR' });
+      await expect(zlibApi.searchBooks({ query: 'book' })).rejects.toThrow('Circuit breaker is OPEN');
+      expect(mockPythonShellRun).toHaveBeenCalledTimes(1);
+      mockPythonShellRun.mockResolvedValueOnce(mockMcpResponse([]));
+      expect(await zlibApi.searchMultiSource({ query: 'book', source: 'libgen' })).toEqual([]);
+      mockPythonShellRun.mockResolvedValueOnce(mockMcpResponse({ processed_file_path: '/out.txt' }));
+      expect(await zlibApi.processDocumentForRag({ filePath: '/book.pdf' })).toEqual({ processed_file_path: '/out.txt' });
+    } finally {
+      if (oldRetries === undefined) delete process.env.RETRY_MAX_RETRIES; else process.env.RETRY_MAX_RETRIES = oldRetries;
+      if (oldThreshold === undefined) delete process.env.CIRCUIT_BREAKER_THRESHOLD; else process.env.CIRCUIT_BREAKER_THRESHOLD = oldThreshold;
+    }
+  });
+
+  test('auto routing can reach the fallback when the primary circuit is open', async () => {
+    const { NetworkError } = await import('../lib/errors.js');
+    const saved = { RETRY_MAX_RETRIES: process.env.RETRY_MAX_RETRIES, CIRCUIT_BREAKER_THRESHOLD: process.env.CIRCUIT_BREAKER_THRESHOLD, ANNAS_SECRET_KEY: process.env.ANNAS_SECRET_KEY };
+    process.env.RETRY_MAX_RETRIES = '0'; process.env.CIRCUIT_BREAKER_THRESHOLD = '1'; process.env.ANNAS_SECRET_KEY = 'test-only';
+    try {
+      mockGetManagedPythonPath.mockResolvedValue('/fake/python');
+      mockPythonShellRun.mockRejectedValueOnce(new NetworkError('Unavailable'));
+      await expect(zlibApi.searchMultiSource({ query: 'book', source: 'annas' })).rejects.toMatchObject({ code: 'NETWORK_ERROR' });
+      await expect(zlibApi.searchMultiSource({ query: 'book', source: 'annas' })).rejects.toThrow('Circuit breaker is OPEN');
+      mockPythonShellRun.mockResolvedValueOnce(mockMcpResponse([{ source: 'libgen' }]));
+      expect(await zlibApi.searchMultiSource({ query: 'book' })).toEqual([{ source: 'libgen' }]);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+    }
+  });
+
 });

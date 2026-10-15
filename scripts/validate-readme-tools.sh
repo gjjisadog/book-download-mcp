@@ -9,9 +9,9 @@ set -euo pipefail
 # extension, so BSD grep on macOS fails this script with "invalid option -- P"
 # even though it passes on the Linux CI runner (issue #14).
 
-# Extract tool names from server.tool() calls in src/index.ts.
-# server.tool( appears on one line; the tool name string appears on the next line.
-SOURCE_TOOLS=$(grep -A 1 "server\.tool(" src/index.ts \
+# Extract direct or cancellation-aware tool registrations in src/index.ts.
+# The registration call and its tool name appear on adjacent lines.
+SOURCE_TOOLS=$(grep -EA 1 "(server\.tool|registerTool)\(" src/index.ts \
   | python3 -c "import re,sys; print('\n'.join(sorted(m for l in sys.stdin for m in re.findall(r'[\'\"]([a-z_]+)[\'\"]', l))))")
 
 # Extract tool names from the README.md Available MCP Tools section only.

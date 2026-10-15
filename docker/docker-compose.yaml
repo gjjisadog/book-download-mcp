@@ -15,7 +15,7 @@ services:
     container_name: zlibrary-mcp
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env
     volumes:
@@ -23,8 +23,8 @@ services:
       - ./downloads:/app/downloads
     # SuperGateway options for HTTP transport
     command: >
+      --logLevel none
       --port 8000
-      --host 0.0.0.0
       --healthEndpoint /health
       --stdio "node /app/dist/index.js"
     healthcheck:

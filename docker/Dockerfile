@@ -37,7 +37,7 @@ COPY scripts/ ./scripts/
 # Skip opencv-python-headless and its transitive dep numpy: no musl-compatible
 # wheels exist for Alpine. Runtime code imports cv2 conditionally with graceful
 # fallback, so X-mark detection is simply unavailable in the Docker image.
-RUN uv sync --frozen --no-dev \
+RUN uv sync --frozen --python 3.12 --no-dev \
     --no-install-package opencv-python-headless \
     --no-install-package numpy
 
@@ -67,4 +67,4 @@ RUN mkdir -p /app/downloads
 
 # Default command runs the MCP server via SuperGateway
 # SuperGateway exposes the stdio MCP server over HTTP
-CMD ["--stdio", "node /app/dist/index.js"]
+CMD ["--logLevel", "none", "--stdio", "node /app/dist/index.js"]

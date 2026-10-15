@@ -16,10 +16,10 @@ from bs4 import BeautifulSoup
 
 from .base import SourceAdapter
 from .config import SourceConfig
-from .models import DownloadResult, SourceType, UnifiedBookResult
+from .models import DownloadResult, SourceType, UnifiedBookResult, normalize_md5
 
 # CRITICAL: Import is libgen_api_enhanced, NOT libgen_api
-from libgen_api_enhanced import LibgenSearch
+from libgen_api_enhanced.search_request import SearchRequest
 
 logger = logging.getLogger("zlibrary.sources")
 
@@ -34,7 +34,7 @@ FALLBACK_MIRRORS = ("li", "vg", "la")
 class LibgenAdapter(SourceAdapter):
     """LibGen source adapter.
 
-    Wraps the synchronous libgen-api-enhanced library with async interface.
+    Uses cancellable HTTP and the libgen-api-enhanced HTML parser.
     Implements rate limiting to avoid being blocked by LibGen servers.
 
     Attributes:
@@ -66,8 +66,7 @@ class LibgenAdapter(SourceAdapter):
     async def search(self, query: str, **kwargs) -> List[UnifiedBookResult]:
         """Search for books matching query.
 
-        Uses libgen-api-enhanced LibgenSearch.search_title() wrapped in
-        asyncio.to_thread() to avoid blocking the event loop.
+        Uses the libgen-api-enhanced parser with bounded asynchronous HTTP.
 
         Args:
             query: Search string (title, author, ISBN, etc.)
@@ -78,11 +77,26 @@ class LibgenAdapter(SourceAdapter):
         """
         await self._rate_limit()
 
-        def _search_sync():
-            s = LibgenSearch(mirror=self.mirror)
-            return s.search_title(query)
-
-        results = await asyncio.to_thread(_search_sync)
+        request = SearchRequest(query, mirror=f"https://libgen.{self.mirror}")
+        params = {
+            "req": request.query,
+            "columns[]": request.search_type.columns,
+            "objects[]": ["f", "e", "s", "a", "p", "w"],
+            "topics[]": [topic.code for topic in request.search_in],
+            "res": "100",
+            "filesuns": "all",
+        }
+        # Keep the library's parser; use cancellable HTTP with bounded timeouts
+        # rather than its unbounded requests.get running in an executor thread.
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(30, connect=10), follow_redirects=True
+        ) as client:
+            response = await client.get(f"{request.mirror}/index.php", params=params)
+            response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+        request.strip_i_tag_from_soup(soup)
+        table = soup.find("table", {"id": "tablelibgen"})
+        results = list(request.get_books(table)) if table is not None else []
 
         if not results:
             return []
@@ -156,21 +170,25 @@ class LibgenAdapter(SourceAdapter):
         can answer 200 with an HTML error page.
         """
         try:
-            response = await client.get(url, headers={"Range": "bytes=0-2047"})
+            async with client.stream(
+                "GET", url, headers={"Range": "bytes=0-2047"}
+            ) as response:
+                if "/ads.php" in str(response.url):
+                    return False, "key expired (bounced to ads.php)"
+                if response.status_code not in (200, 206):
+                    return False, f"HTTP {response.status_code}"
+                if "text/html" in response.headers.get("content-type", ""):
+                    return False, "served HTML, not a file"
+                prefix = bytearray()
+                async for chunk in response.aiter_bytes():
+                    prefix.extend(chunk[: 2048 - len(prefix)])
+                    if len(prefix) >= 2048:
+                        break
+                if prefix[:4] != b"%PDF" and len(prefix) < 512:
+                    return False, "response too small to be a file"
+                return True, urlparse(str(response.url)).hostname or "?"
         except Exception as exc:
             return False, type(exc).__name__
-
-        if "/ads.php" in str(response.url):
-            return False, "key expired (bounced to ads.php)"
-        if response.status_code not in (200, 206):
-            return False, f"HTTP {response.status_code}"
-        if "text/html" in response.headers.get("content-type", ""):
-            return False, "served HTML, not a file"
-        if not response.content[:4] == b"%PDF" and len(response.content) < 512:
-            return False, "response too small to be a file"
-
-        cdn = urlparse(str(response.url)).hostname or "?"
-        return True, cdn
 
     async def get_download_url(self, md5: str) -> DownloadResult:
         """Resolve a clearnet download URL for a book by MD5 hash.
@@ -195,6 +213,7 @@ class LibgenAdapter(SourceAdapter):
         Raises:
             ValueError: If no mirror yields a download key
         """
+        md5 = normalize_md5(md5)
         attempts = []
 
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:

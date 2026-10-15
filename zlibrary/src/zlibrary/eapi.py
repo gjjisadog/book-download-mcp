@@ -11,6 +11,7 @@ import re
 import httpx
 import aiofiles
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 from urllib.parse import unquote
@@ -61,7 +62,12 @@ def _download_limit_reached(response: dict) -> bool:
     message = f"{error} {response.get('message', '')}".lower()
     return any(
         phrase in message
-        for phrase in ("download limit", "downloads limit", "download quota", "daily limit")
+        for phrase in (
+            "download limit",
+            "downloads limit",
+            "download quota",
+            "daily limit",
+        )
     )
 
 
@@ -415,6 +421,8 @@ class EAPIClient:
         book_hash: str,
         output_dir: str,
         filename: Optional[str] = None,
+        *,
+        temporary: bool = False,
     ) -> str:
         """Download a book file using EAPI download link.
 
@@ -478,19 +486,34 @@ class EAPIClient:
                 # Path("/downloads") / "../../x" resolves outside the directory.
                 filename = sanitize_download_filename(filename) or f"{book_id}.bin"
 
-                output_path = Path(output_dir) / filename
-
-                async with aiofiles.open(output_path, "wb") as f:
-                    async for chunk in response.aiter_bytes():
-                        await f.write(chunk)
-
-        # Verify non-empty
-        if not output_path.exists() or output_path.stat().st_size == 0:
-            if output_path.exists():
-                output_path.unlink()
-            raise RuntimeError(f"Download produced empty file for book {book_id}")
-
-        return str(output_path.resolve())
+                output_path = Path(output_dir).resolve() / filename
+                fd, temporary_name = tempfile.mkstemp(
+                    prefix=".download-", suffix="-" + filename, dir=output_path.parent
+                )
+                os.close(fd)
+                temporary_path = Path(temporary_name)
+                try:
+                    written = 0
+                    completed = False
+                    async with aiofiles.open(temporary_path, "wb") as f:
+                        async for chunk in response.aiter_bytes():
+                            await f.write(chunk)
+                            written += len(chunk)
+                    expected = response.headers.get("content-length")
+                    if written == 0 or (
+                        expected
+                        and not response.headers.get("content-encoding")
+                        and written != int(expected)
+                    ):
+                        raise RuntimeError(f"Incomplete download for book {book_id}")
+                    completed = True
+                    if temporary:
+                        return str(temporary_path)
+                    os.replace(temporary_path, output_path)
+                    return str(output_path)
+                finally:
+                    if not (temporary and completed):
+                        temporary_path.unlink(missing_ok=True)
 
 
 def normalize_eapi_book(eapi_book: dict) -> dict:

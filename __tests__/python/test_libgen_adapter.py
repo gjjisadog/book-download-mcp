@@ -18,6 +18,17 @@ pytestmark = pytest.mark.unit
 class TestLibgenAdapterSearch:
     """Tests for LibgenAdapter.search() method."""
 
+    @pytest.fixture(autouse=True)
+    def search_transport(self, monkeypatch):
+        real_client = httpx.AsyncClient
+        transport = httpx.MockTransport(
+            lambda req: httpx.Response(200, text='<table id="tablelibgen"></table>')
+        )
+        monkeypatch.setattr(
+            "lib.sources.libgen.httpx.AsyncClient",
+            lambda **kw: real_client(transport=transport, **kw),
+        )
+
     @pytest.fixture
     def config(self):
         """Create test configuration."""
@@ -50,9 +61,10 @@ class TestLibgenAdapterSearch:
 
         adapter = LibgenAdapter(config)
 
-        with patch("lib.sources.libgen.LibgenSearch") as mock_search_class:
+        with patch("lib.sources.libgen.SearchRequest") as mock_search_class:
             mock_instance = MagicMock()
-            mock_instance.search_title.return_value = [mock_book]
+            mock_instance.get_books.return_value = [mock_book]
+            mock_instance.mirror = "https://libgen.li"
             mock_search_class.return_value = mock_instance
 
             results = await adapter.search("python")
@@ -74,38 +86,15 @@ class TestLibgenAdapterSearch:
 
         adapter = LibgenAdapter(config)
 
-        with patch("lib.sources.libgen.LibgenSearch") as mock_search_class:
+        with patch("lib.sources.libgen.SearchRequest") as mock_search_class:
             mock_instance = MagicMock()
-            mock_instance.search_title.return_value = []
+            mock_instance.get_books.return_value = []
+            mock_instance.mirror = "https://libgen.li"
             mock_search_class.return_value = mock_instance
 
             results = await adapter.search("nonexistent_book_xyz123")
 
             assert results == []
-
-    @pytest.mark.asyncio
-    async def test_search_uses_asyncio_to_thread(self, config, mock_book):
-        """Search should wrap sync call in asyncio.to_thread()."""
-        from lib.sources.libgen import LibgenAdapter
-
-        adapter = LibgenAdapter(config)
-
-        with patch("lib.sources.libgen.LibgenSearch") as mock_search_class:
-            mock_instance = MagicMock()
-            mock_instance.search_title.return_value = [mock_book]
-            mock_search_class.return_value = mock_instance
-
-            with patch("lib.sources.libgen.asyncio.to_thread") as mock_to_thread:
-                # Make to_thread actually call the function
-                async def call_func(func, *args, **kwargs):
-                    return func(*args, **kwargs)
-
-                mock_to_thread.side_effect = call_func
-
-                await adapter.search("python")
-
-                # Verify to_thread was called
-                mock_to_thread.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_search_handles_missing_attributes(self, config):
@@ -118,9 +107,10 @@ class TestLibgenAdapterSearch:
         minimal_book = MagicMock(spec=[])  # Empty spec means no attributes
         minimal_book.configure_mock(**{})
 
-        with patch("lib.sources.libgen.LibgenSearch") as mock_search_class:
+        with patch("lib.sources.libgen.SearchRequest") as mock_search_class:
             mock_instance = MagicMock()
-            mock_instance.search_title.return_value = [minimal_book]
+            mock_instance.get_books.return_value = [minimal_book]
+            mock_instance.mirror = "https://libgen.li"
             mock_search_class.return_value = mock_instance
 
             results = await adapter.search("python")
@@ -132,7 +122,7 @@ class TestLibgenAdapterSearch:
             assert results[0].source == SourceType.LIBGEN
 
 
-MD5 = "abc123def456"
+MD5 = "a" * 32
 ADS_PAGE_WITH_KEY = (
     "<html><body><table><tr><td>"
     f'<a href="/get.php?md5={MD5}&key=TESTKEY123">GET</a>'
@@ -295,6 +285,17 @@ class TestLibgenAdapterDownload:
 class TestLibgenAdapterRateLimiting:
     """Tests for LibgenAdapter rate limiting."""
 
+    @pytest.fixture(autouse=True)
+    def search_transport(self, monkeypatch):
+        real_client = httpx.AsyncClient
+        transport = httpx.MockTransport(
+            lambda req: httpx.Response(200, text='<table id="tablelibgen"></table>')
+        )
+        monkeypatch.setattr(
+            "lib.sources.libgen.httpx.AsyncClient",
+            lambda **kw: real_client(transport=transport, **kw),
+        )
+
     @pytest.fixture
     def config(self):
         """Create test configuration."""
@@ -311,9 +312,10 @@ class TestLibgenAdapterRateLimiting:
 
         adapter = LibgenAdapter(config)
 
-        with patch("lib.sources.libgen.LibgenSearch") as mock_search_class:
+        with patch("lib.sources.libgen.SearchRequest") as mock_search_class:
             mock_instance = MagicMock()
-            mock_instance.search_title.return_value = []
+            mock_instance.get_books.return_value = []
+            mock_instance.mirror = "https://libgen.li"
             mock_search_class.return_value = mock_instance
 
             with patch("lib.sources.libgen.asyncio.sleep") as mock_sleep:
@@ -359,3 +361,59 @@ class TestLibgenAdapterInterface:
 
         adapter = LibgenAdapter(config)
         await adapter.close()  # Should not raise
+
+
+@pytest.mark.asyncio
+async def test_probe_closes_stream_when_range_is_ignored():
+    from lib.sources.libgen import LibgenAdapter
+
+    class LargeBody(httpx.AsyncByteStream):
+        read = 0
+        closed = False
+
+        async def __aiter__(self):
+            for _ in range(1024):
+                self.read += 1024
+                yield b"%PDF" + b"x" * 1020
+
+        async def aclose(self):
+            self.closed = True
+
+    body = LargeBody()
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, stream=body))
+    ) as client:
+        ok, _ = await LibgenAdapter(SourceConfig())._serves_bytes(
+            client, "https://example.org/book"
+        )
+    assert ok and body.closed
+    assert body.read == 2048
+
+
+@pytest.mark.asyncio
+async def test_search_cancellation_closes_http_without_executor_threads(monkeypatch):
+    import asyncio
+    from lib.sources.libgen import LibgenAdapter
+
+    closed = False
+
+    class Transport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            await asyncio.Event().wait()
+
+        async def aclose(self):
+            nonlocal closed
+            closed = True
+
+    real_client = httpx.AsyncClient
+
+    def client(**kwargs):
+        assert kwargs["timeout"].read == 30 and kwargs["timeout"].connect == 10
+        return real_client(transport=Transport(), **kwargs)
+
+    monkeypatch.setattr("lib.sources.libgen.httpx.AsyncClient", client)
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            LibgenAdapter(SourceConfig()).search("python"), timeout=0.02
+        )
+    assert closed

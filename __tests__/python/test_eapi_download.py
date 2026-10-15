@@ -36,21 +36,32 @@ def tmp_download_dir(tmp_path):
 class TestDownloadFile:
     """Tests for EAPIClient.download_file."""
 
-    @pytest.mark.parametrize("response", [
-        {"success": 0, "error": "Daily download limit reached"},
-        {"success": 0, "error": {"message": "Download quota exhausted"}},
-        {"success": 0, "user": {"downloads_today_left": 0}},
-    ])
-    async def test_quota_error_is_typed_before_any_write(self, eapi_client, tmp_download_dir, response):
+    @pytest.mark.parametrize(
+        "response",
+        [
+            {"success": 0, "error": "Daily download limit reached"},
+            {"success": 0, "error": {"message": "Download quota exhausted"}},
+            {"success": 0, "user": {"downloads_today_left": 0}},
+        ],
+    )
+    async def test_quota_error_is_typed_before_any_write(
+        self, eapi_client, tmp_download_dir, response
+    ):
         eapi_client.get_download_link = AsyncMock(return_value=response)
         with pytest.raises(DownloadLimitError, match="quota exhausted"):
             await eapi_client.download_file(123, "hash", tmp_download_dir)
         assert not os.path.exists(tmp_download_dir)
 
-    async def test_unrelated_missing_link_does_not_trigger_account_switch(self, eapi_client, tmp_download_dir):
-        eapi_client.get_download_link = AsyncMock(return_value={
-            "success": 0, "error": "Book not found", "title": "Daily Download Limit"
-        })
+    async def test_unrelated_missing_link_does_not_trigger_account_switch(
+        self, eapi_client, tmp_download_dir
+    ):
+        eapi_client.get_download_link = AsyncMock(
+            return_value={
+                "success": 0,
+                "error": "Book not found",
+                "title": "Daily Download Limit",
+            }
+        )
         with pytest.raises(RuntimeError) as error:
             await eapi_client.download_file(123, "hash", tmp_download_dir)
         assert not isinstance(error.value, DownloadLimitError)
@@ -198,3 +209,42 @@ class TestDownloadFile:
         mock_client_instance.stream.assert_called_once()
         call_args = mock_client_instance.stream.call_args
         assert call_args[0][1].startswith("https://")
+
+
+@pytest.mark.parametrize("failure", ["interrupt", "empty", "truncated", "cancel"])
+async def test_atomic_download_preserves_old_file(
+    eapi_client, tmp_path, monkeypatch, failure
+):
+    import asyncio
+    import httpx
+
+    old = tmp_path / "book.pdf"
+    old.write_bytes(b"old complete book")
+    eapi_client.get_download_link = AsyncMock(
+        return_value={"downloadLink": "https://example.org/book.pdf"}
+    )
+
+    class Body(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            if failure == "empty":
+                return
+            yield b"new prefix"
+            if failure == "interrupt":
+                raise httpx.ReadError("interrupted")
+            if failure == "cancel":
+                raise asyncio.CancelledError()
+
+    real_client = httpx.AsyncClient
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(
+            200, stream=Body(), headers={"Content-Length": "100"}
+        )
+    )
+    monkeypatch.setattr(
+        "zlibrary.eapi.httpx.AsyncClient",
+        lambda **kw: real_client(transport=transport, **kw),
+    )
+    with pytest.raises((RuntimeError, httpx.ReadError, asyncio.CancelledError)):
+        await eapi_client.download_file(123, "hash", str(tmp_path))
+    assert old.read_bytes() == b"old complete book"
+    assert list(tmp_path.iterdir()) == [old]

@@ -10,6 +10,7 @@ export type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 
 export interface CircuitBreakerOptions {
   threshold?: number;
+  isFailure?: (error: unknown) => boolean;
   timeout?: number;
   onStateChange?: (oldState: CircuitState, newState: CircuitState) => void;
 }
@@ -22,7 +23,7 @@ export class CircuitBreaker {
   private readonly timeout: number;
   private readonly onStateChange?: (oldState: CircuitState, newState: CircuitState) => void;
 
-  constructor(options: CircuitBreakerOptions = {}) {
+  constructor(private readonly options: CircuitBreakerOptions = {}) {
     this.threshold = options.threshold ?? 5;
     this.timeout = options.timeout ?? 60000;
     this.onStateChange = options.onStateChange;
@@ -48,7 +49,7 @@ export class CircuitBreaker {
       this.onSuccess();
       return result;
     } catch (error) {
-      this.onFailure();
+      if (!this.options.isFailure || this.options.isFailure(error)) this.onFailure();
       throw error;
     }
   }
@@ -90,7 +91,7 @@ export class CircuitBreaker {
       console.error('Circuit breaker opened due to repeated failures', {
         failureCount: this.failureCount,
         threshold: this.threshold,
-        lastFailureTime: new Date(this.lastFailureTime).toISOString()
+        lastFailureTime: new Date(this.lastFailureTime).toISOString(),
       });
     }
   }

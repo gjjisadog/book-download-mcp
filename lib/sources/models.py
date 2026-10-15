@@ -7,6 +7,14 @@ Anna's Archive and LibGen sources.
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Optional
+import re
+
+
+def normalize_md5(value: str) -> str:
+    """Reject identifiers that could become paths or injected URL parameters."""
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F]{32}", value):
+        raise ValueError("md5 must contain exactly 32 hexadecimal characters")
+    return value.lower()
 
 
 class SourceType(str, Enum):

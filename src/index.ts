@@ -1,10 +1,10 @@
 #!/usr/bin/env node
+import { withPythonRequest } from './lib/bridge-runner.js';
 
 import type { ZodObject, ZodRawShape } from 'zod';
 import { z } from 'zod';
 // UV Migration Note: ensureVenvReady removed - user runs `uv sync` before build
 import * as fs from 'fs';
-import { appendFile as appendFileAsync, mkdir as mkdirAsync } from 'fs/promises';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -278,13 +278,6 @@ const handlers: HandlerMap = {
     try {
       const searchBooksReceivedArgsLog = `[${new Date().toISOString()}] [src/index.ts] searchBooks handler received Zod-parsed args: ${JSON.stringify(args)}\n`;
       logger.debug(searchBooksReceivedArgsLog.trim());
-      try {
-        const logFilePath = path.resolve(__dirname, '..', 'logs', 'nodejs_debug.log');
-        await mkdirAsync(path.dirname(logFilePath), { recursive: true });
-        await appendFileAsync(logFilePath, searchBooksReceivedArgsLog);
-      } catch (e) {
-        console.error('Failed to write to logs/nodejs_debug.log', e);
-      }
       const apiArgs = {
         query: args.query,
         exact: args.exact,
@@ -297,12 +290,6 @@ const handlers: HandlerMap = {
       };
       const searchBooksSendingLog = `[${new Date().toISOString()}] [src/index.ts] searchBooks handler sending to zlibraryApi: ${JSON.stringify(apiArgs)}\n`;
       logger.debug(searchBooksSendingLog.trim());
-      try {
-        const logFilePath = path.resolve(__dirname, '..', 'logs', 'nodejs_debug.log');
-        await appendFileAsync(logFilePath, searchBooksSendingLog);
-      } catch (e) {
-        console.error('Failed to write to logs/nodejs_debug.log', e);
-      }
       return await zlibraryApi.searchBooks(apiArgs);
     } catch (error: any) {
       return { error: { message: error.message || 'Failed to search books' } };
@@ -313,13 +300,6 @@ const handlers: HandlerMap = {
     try {
       const ftsReceivedArgsLog = `[${new Date().toISOString()}] [src/index.ts] fullTextSearch handler received Zod-parsed args: ${JSON.stringify(args)}\n`;
       logger.debug(ftsReceivedArgsLog.trim());
-      try {
-        const logFilePath = path.resolve(__dirname, '..', 'logs', 'nodejs_debug.log');
-        await mkdirAsync(path.dirname(logFilePath), { recursive: true });
-        await appendFileAsync(logFilePath, ftsReceivedArgsLog);
-      } catch (e) {
-        console.error('Failed to write to logs/nodejs_debug.log', e);
-      }
       const apiArgsFTS = {
         query: args.query,
         exact: args.exact,
@@ -332,12 +312,6 @@ const handlers: HandlerMap = {
       };
       const ftsSendingLog = `[${new Date().toISOString()}] [src/index.ts] fullTextSearch handler sending to zlibraryApi: ${JSON.stringify(apiArgsFTS)}\n`;
       logger.debug(ftsSendingLog.trim());
-      try {
-        const logFilePath = path.resolve(__dirname, '..', 'logs', 'nodejs_debug.log');
-        await appendFileAsync(logFilePath, ftsSendingLog);
-      } catch (e) {
-        console.error('Failed to write to logs/nodejs_debug.log', e);
-      }
       return await zlibraryApi.fullTextSearch(apiArgsFTS);
     } catch (error: any) {
       return { error: { message: error.message || 'Failed to perform full text search' } };
@@ -591,10 +565,12 @@ function validateCredentials(): void {
       throw new Error('ZLIBRARY_ACCOUNTS must be a JSON array of accounts');
     }
     const parsed = z
-      .array(z.object({
-        email: z.string().trim().min(1),
-        password: z.string().min(1),
-      }))
+      .array(
+        z.object({
+          email: z.string().trim().min(1),
+          password: z.string().min(1),
+        }),
+      )
       .min(1)
       .safeParse(accounts);
     if (!parsed.success) {
@@ -639,14 +615,6 @@ async function start(
       validateCredentials();
     }
 
-    // Ensure the logs directory exists
-    try {
-      await mkdirAsync(path.resolve(__dirname, '..', 'logs'), { recursive: true });
-      logger.debug("Log directory 'logs/' ensured.");
-    } catch (dirError: any) {
-      console.error("Failed to create 'logs/' directory:", dirError.message);
-    }
-
     // Instantiate the McpServer
     const server = new McpServer({
       name: 'zlibrary-mcp',
@@ -654,6 +622,13 @@ async function start(
     });
 
     // ========================================================================
+    const registerTool: typeof server.tool = ((...args: any[]) => {
+      const handler = args.pop();
+      return (server.tool as any)(...args, (params: any, extra: any) =>
+        withPythonRequest(extra?.signal, () => handler(params, extra)),
+      );
+    }) as typeof server.tool;
+
     // Register all 13 tools via server.tool()
     // ========================================================================
 
@@ -661,7 +636,7 @@ async function start(
     const ann = (name: string) => toolAnnotations[name] as ToolAnnotations;
 
     // 1. search_books
-    server.tool(
+    registerTool(
       'search_books',
       'Search for books in Z-Library by title, author, or keywords. Returns matching books with metadata including title (string), author (string), name, authors (array), year, format, and file size. Use exact=true for precise title matching. Filter results by year range, language, or file format.',
       SearchBooksParamsSchema.shape,
@@ -670,7 +645,7 @@ async function start(
     );
 
     // 2. full_text_search
-    server.tool(
+    registerTool(
       'full_text_search',
       'Search for books containing specific text within their content. Returns books with title (string), author (string), name, authors (array), and other metadata. Useful for finding books that discuss particular topics, quotes, or concepts.',
       FullTextSearchParamsSchema.shape,
@@ -679,7 +654,7 @@ async function start(
     );
 
     // 3. get_download_history
-    server.tool(
+    registerTool(
       'get_download_history',
       "Get the user's Z-Library download history. Returns a list of previously downloaded books with their metadata.",
       GetDownloadHistoryParamsSchema.shape,
@@ -689,7 +664,7 @@ async function start(
     );
 
     // 4. get_download_limits
-    server.tool(
+    registerTool(
       'get_download_limits',
       "Get the user's current Z-Library download limits. Shows daily download quota, downloads used today, and remaining downloads.",
       GetDownloadLimitsParamsSchema.shape,
@@ -698,7 +673,7 @@ async function start(
     );
 
     // 5. get_recent_books
-    server.tool(
+    registerTool(
       'get_recent_books',
       'Get recently added books to Z-Library. Optionally filter by file format.',
       GetRecentBooksParamsSchema.shape,
@@ -717,7 +692,7 @@ async function start(
     );
 
     // 6. download_book_to_file
-    server.tool(
+    registerTool(
       'download_book_to_file',
       'Download a book to a local file. Pass the full bookDetails object from search_books results. Optionally process the document for RAG (text extraction) after download. Returns file paths for both the original book and processed text.',
       DownloadBookToFileParamsSchema.shape,
@@ -727,7 +702,7 @@ async function start(
     );
 
     // 7. process_document_for_rag
-    server.tool(
+    registerTool(
       'process_document_for_rag',
       'Process a downloaded document (EPUB, TXT, PDF) to extract clean text content for RAG (Retrieval-Augmented Generation). Extracts text, preserves structure, detects footnotes, and outputs a text file.',
       ProcessDocumentForRagParamsSchema.shape,
@@ -737,7 +712,7 @@ async function start(
     );
 
     // 8. get_book_metadata
-    server.tool(
+    registerTool(
       'get_book_metadata',
       'Get metadata for a book. By default returns core fields (title, author, year, publisher, language, pages, isbn, rating, cover, categories). Use the include parameter to add optional field groups: terms (60+ conceptual keywords), booklists (11+ curated collections), ipfs (IPFS CIDs), ratings (quality score), description (full text). Requires bookId and bookHash from search results.',
       GetBookMetadataParamsSchema.shape,
@@ -746,7 +721,7 @@ async function start(
     );
 
     // 9. search_by_term
-    server.tool(
+    registerTool(
       'search_by_term',
       'Search for books by conceptual term (e.g., "phenomenology", "dialectic", "epistemology"). Returns books with title (string), author (string), and other metadata. Books in Z-Library are tagged with 60+ conceptual terms.',
       SearchByTermParamsSchema.shape,
@@ -755,7 +730,7 @@ async function start(
     );
 
     // 10. search_by_author
-    server.tool(
+    registerTool(
       'search_by_author',
       'Advanced author search with support for various name formats. Returns books with title (string), author (string), and other metadata. Use exact=true for precise matching. Filter by publication year, language, or file format.',
       SearchByAuthorParamsSchema.shape,
@@ -764,7 +739,7 @@ async function start(
     );
 
     // 11. fetch_booklist
-    server.tool(
+    registerTool(
       'fetch_booklist',
       'Fetch books from an expert-curated booklist. Z-Library books belong to 11+ booklists with up to 954 books per list. Get booklist IDs from get_book_metadata.',
       FetchBooklistParamsSchema.shape,
@@ -773,7 +748,7 @@ async function start(
     );
 
     // 12. search_advanced
-    server.tool(
+    registerTool(
       'search_advanced',
       'Advanced search with automatic separation of exact matches from fuzzy/approximate matches. Returns two arrays: exact_matches and fuzzy_matches, each containing books with title (string), author (string), and other metadata.',
       SearchAdvancedParamsSchema.shape,
@@ -782,7 +757,7 @@ async function start(
     );
 
     // 13. search_multi_source
-    server.tool(
+    registerTool(
       'search_multi_source',
       "Search for books across Anna's Archive and LibGen. Alternative to Z-Library EAPI. Returns books with md5, title, author, year, extension, size, source, download_url. Use source=auto to prefer Anna's Archive with LibGen fallback, or force a specific source.",
       SearchMultiSourceParamsSchema.shape,

@@ -14,10 +14,17 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 from bs4 import BeautifulSoup
+from lib.logging_utils import redact
 
 from .base import SourceAdapter
 from .config import ANNAS_TRUSTED_HOSTS, SourceConfig
-from .models import DownloadResult, QuotaInfo, SourceType, UnifiedBookResult
+from .models import (
+    DownloadResult,
+    QuotaInfo,
+    SourceType,
+    UnifiedBookResult,
+    normalize_md5,
+)
 
 
 class QuotaExhaustedError(Exception):
@@ -131,7 +138,13 @@ class AnnasArchiveAdapter(SourceAdapter):
         if not self.secret_key:
             raise ValueError("ANNAS_SECRET_KEY not configured")
 
-        host = (urlsplit(self.base_url).hostname or "").lower()
+        md5 = normalize_md5(md5)
+        parsed = urlsplit(self.base_url)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https":
+            raise ValueError(
+                "ANNAS_BASE_URL must use HTTPS for authenticated downloads"
+            )
         if host not in ANNAS_TRUSTED_HOSTS:
             raise ValueError(
                 f"Refusing to send ANNAS_SECRET_KEY to unverified host '{host}'. "
@@ -152,13 +165,26 @@ class AnnasArchiveAdapter(SourceAdapter):
             "domain_index": 1,  # CRITICAL: Use 1, not 0 (SSL errors on 0)
         }
 
-        response = await client.get(url, params=params)
-        response.raise_for_status()
+        try:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as error:
+            raise httpx.HTTPStatusError(
+                redact(str(error), self.secret_key),
+                request=error.request,
+                response=error.response,
+            ) from None
+        except httpx.RequestError as error:
+            raise type(error)(
+                redact(str(error), self.secret_key), request=error.request
+            ) from None
         data = response.json()
 
         # Check for API error
         if data.get("error"):
-            raise Exception(f"Anna's Archive API error: {data['error']}")
+            raise RuntimeError(
+                redact(f"Anna's Archive API error: {data['error']}", self.secret_key)
+            )
 
         # Extract download URL
         download_url = data.get("download_url")
