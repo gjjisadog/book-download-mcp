@@ -45,7 +45,7 @@ RUN uv sync --frozen --python 3.12 --no-dev \
 RUN npm ci && npm run build
 
 # --- Stage 2: Runtime ---
-FROM ghcr.io/supercorp-ai/supergateway:3.4.3 AS runtime
+FROM ghcr.io/supercorp-ai/supergateway:4.1.0 AS runtime
 
 WORKDIR /app
 
