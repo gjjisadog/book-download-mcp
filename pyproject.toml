@@ -1,12 +1,12 @@
 # pyproject.toml - UV-based dependency management (v2.0.0)
 #
-# BookHarbor MCP with modern UV dependency management
+# Book Download MCP with modern UV dependency management
 # Setup: uv sync (creates .venv and installs dependencies)
 
 [project]
 name = "zlibrary-mcp"
 version = "1.4.1"
-description = "BookHarbor MCP: multi-source book discovery and document processing"
+description = "Book Download MCP: multi-source book discovery and document processing"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -60,9 +60,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/gjjisadog/bookharbor-mcp"
-Repository = "https://github.com/gjjisadog/bookharbor-mcp.git"
-Issues = "https://github.com/gjjisadog/bookharbor-mcp/issues"
+Homepage = "https://github.com/gjjisadog/book-download-mcp"
+Repository = "https://github.com/gjjisadog/book-download-mcp.git"
+Issues = "https://github.com/gjjisadog/book-download-mcp/issues"
 
 [build-system]
 requires = ["setuptools>=83.0.0", "wheel"]

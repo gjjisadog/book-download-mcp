@@ -89,8 +89,8 @@
 ### 1. Clone Repository
 
 ```bash
-git clone https://github.com/gjjisadog/bookharbor-mcp.git
-cd bookharbor-mcp
+git clone https://github.com/gjjisadog/book-download-mcp.git
+cd book-download-mcp
 ```
 
 ---
@@ -169,7 +169,7 @@ pytest
   "mcpServers": {
     "zlibrary": {
       "command": "node",
-      "args": ["/full/path/to/bookharbor-mcp/dist/index.js"],
+      "args": ["/full/path/to/book-download-mcp/dist/index.js"],
       "env": {
         "ZLIBRARY_EMAIL": "your@email.com",
         "ZLIBRARY_PASSWORD": "your_password"

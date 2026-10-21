@@ -1,4 +1,4 @@
-# BookHarbor MCP Docker Image
+# Book Download MCP Docker Image
 # Multi-stage build for minimal runtime image
 #
 # Build from project root:

@@ -1,6 +1,6 @@
 # Vision
 
-BookHarbor MCP is the **acquisition layer** for research corpora: it finds books,
+Book Download MCP is the **acquisition layer** for research corpora: it finds books,
 retrieves them, and turns them into files a pipeline can use. It serves a
 researcher assembling a corpus — and any downstream tool that needs books —
 through the Model Context Protocol.

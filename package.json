@@ -1,7 +1,7 @@
 {
   "name": "@gjjisadog/zlibrary-mcp",
   "version": "1.4.1",
-  "description": "BookHarbor MCP: multi-source book discovery, account pools, and document processing",
+  "description": "Book Download MCP: multi-source book discovery, account pools, and document processing",
   "main": "dist/index.js",
   "type": "module",
   "exports": {
@@ -63,12 +63,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gjjisadog/bookharbor-mcp.git"
+    "url": "git+https://github.com/gjjisadog/book-download-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/gjjisadog/bookharbor-mcp/issues"
+    "url": "https://github.com/gjjisadog/book-download-mcp/issues"
   },
-  "homepage": "https://github.com/gjjisadog/bookharbor-mcp#readme",
+  "homepage": "https://github.com/gjjisadog/book-download-mcp#readme",
   "engines": {
     "node": ">=22"
   },

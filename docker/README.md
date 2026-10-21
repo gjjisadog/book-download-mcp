@@ -1,6 +1,6 @@
-# BookHarbor MCP Docker Deployment
+# Book Download MCP Docker Deployment
 
-Run BookHarbor MCP in a Docker container with HTTP transport via [SuperGateway](https://github.com/supercorp-ai/supergateway).
+Run Book Download MCP in a Docker container with HTTP transport via [SuperGateway](https://github.com/supercorp-ai/supergateway).
 
 ## Quick Start
 
