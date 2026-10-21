@@ -39,6 +39,8 @@ const requiredCompiledFiles = [
   { path: 'dist/lib/python-bridge.js', critical: true, description: 'Python bridge TypeScript wrapper' },
   { path: 'dist/lib/bridge-runner.js', critical: true, description: 'Bounded Python worker execution' },
   { path: 'dist/lib/session-cache.js', critical: true, description: 'Private session transport' },
+  { path: 'dist/lib/book-selection.js', critical: true, description: 'Version comparison and download confirmation' },
+  { path: 'dist/lib/external-sources.js', critical: true, description: 'Optional MCP source adapters' },
   { path: 'dist/lib/zlibrary-api.js', critical: true, description: 'Z-Library API wrapper' },
   { path: 'dist/lib/venv-manager.js', critical: true, description: 'Python venv management' }
 ];

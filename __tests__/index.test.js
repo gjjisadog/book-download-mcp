@@ -252,7 +252,7 @@ describe('Tool Handlers (Direct)', () => {
 
        const handler = toolRegistry.download_book_to_file.handler;
        const mockBookDetailsArg = { id: 'book456', url: 'http://example.com/book/456/slug', title: 'Test Download' };
-       const mockArgs = { bookDetails: mockBookDetailsArg, outputDir: '/tmp/test' };
+       const mockArgs = { bookDetails: mockBookDetailsArg, outputDir: '/tmp/test', confirmed: true };
        const validatedArgs = toolRegistry.download_book_to_file.schema.parse(mockArgs);
        const mockResult = { file_path: '/tmp/test/book.epub', processed_file_path: null };
        mockDownloadBookToFile.mockResolvedValueOnce(mockResult);

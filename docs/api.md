@@ -1,6 +1,6 @@
 # API Reference
 
-This is the API reference for the **zlibrary-mcp** MCP (Model Context Protocol) server. Tools are invoked via MCP protocol -- not HTTP REST. All tools require valid Z-Library credentials (`ZLIBRARY_EMAIL` and `ZLIBRARY_PASSWORD`) configured in the MCP client's environment.
+This is the API reference for **Book Download MCP**. Tools are invoked via MCP protocol -- not HTTP REST. Z-Library tools require credentials (`ZLIBRARY_EMAIL` and `ZLIBRARY_PASSWORD`, or `ZLIBRARY_ACCOUNTS`) in the server environment. LibGen and local document processing do not require Z-Library credentials.
 
 All tools return MCP content arrays in the format:
 
@@ -239,17 +239,25 @@ Each entry contains standard book metadata fields.
 
 ### search_multi_source
 
-**Description:** Search for books across Anna's Archive and LibGen. An alternative to Z-Library's EAPI. Use `source=auto` to prefer Anna's Archive with LibGen fallback, or force a specific source.
+**Description:** Search all configured sources in parallel and compare candidate versions by reported quality, then reader ratings. Missing scores and actual file clarity remain unknown. Different sources' scores need explicit maximum scales for comparison; scores from a common source can be compared without normalization. Check book identity, language and edition before offering alternatives.
 
 **Parameters:**
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | query | string | Yes | -- | Search query |
-| source | enum | No | `"auto"` | Source selection: `"auto"` (Anna's Archive if key available, else LibGen), `"annas"` (force Anna's Archive), or `"libgen"` (force LibGen) |
-| count | integer | No | `10` | Maximum number of results to return |
+| source | enum | No | `"all"` | `"all"`: configured sources plus installed optional backends; `"auto"`: previous Anna/LibGen fallback; or force `"zlibrary"`, `"annas"`, `"libgen"`, `"libgen_mcp"`, `"find_a_book"` |
+| count | integer | No | `10` | Maximum combined results, from 1 to 50 |
 
-**Returns:** JSON array of book objects with source-specific fields: `md5`, `title`, `author`, `year`, `extension`, `size`, `source`, `download_url`.
+**Returns:** Object with ranked `books`, `sources_used`, and (for `all` / `zlibrary`) `sources_unavailable` and `selection_note`. Each book preserves its source-specific identifiers and fields, plus `recommendation` with `reported_quality`, `reported_rating`, `clarity: "unverified"`, and reasons. Scores contain their reported `value` and `max` (null when unknown). One failing source does not hide healthy results. No full book is downloaded during ranking.
+
+Optional backends retain `source="libgen_mcp"` or `"find_a_book"` for download routing,
+and `origin` for the actual catalog/provider. Their metadata-only records are
+returned separately in `discovery`; these reference links are not download
+instructions. `libgen_mcp` accepts MD5, DOI or ISBN downloads; `find_a_book`
+accepts MD5 and returns up to five hits on its first search page. Both backends
+participate in `all` by default when installed; `BOOKHARBOR_MCP_SOURCES` can
+restrict the optional list or disable it with an empty value.
 
 **Example Usage:**
 
@@ -258,7 +266,7 @@ Each entry contains standard book metadata fields.
   "tool": "search_multi_source",
   "arguments": {
     "query": "Phenomenology of Spirit",
-    "source": "auto",
+    "source": "all",
     "count": 5
   }
 }
@@ -268,7 +276,8 @@ Each entry contains standard book metadata fields.
 - Invalid or missing `query` parameter
 - Anna's Archive API key not configured (when `source="annas"`)
 - Both sources unavailable (network errors, rate limiting)
-- Invalid `source` value (must be `"auto"`, `"annas"`, or `"libgen"`)
+- Optional backend unavailable, timed out, or missing (restore packages with `npm install --include=optional`)
+- Invalid `source` value (must be `"all"`, `"auto"`, `"zlibrary"`, `"annas"`, `"libgen"`, `"libgen_mcp"`, or `"find_a_book"`)
 
 ---
 
@@ -383,18 +392,29 @@ Each entry contains standard book metadata fields.
 
 ### download_book_to_file
 
-**Description:** Download a book to a local file. Pass the full `bookDetails` object from `search_books` results. Optionally process the document for RAG after download. When processing is enabled, the response stays additive: `processed_file_path` remains the body-text anchor and sibling bundle paths are returned when available.
+**Description:** Confirm a book version, then download it to a local file. Pass the full `bookDetails` from search results and any matching `alternatives`. MCP clients with form elicitation show an interactive version picker. Without form support, the response requires conversational confirmation. Cancel/decline never downloads. Optionally process the document for RAG after download.
 
 **Parameters:**
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | bookDetails | object | Yes | -- | The full book details object obtained from `search_books` |
+| alternatives | object[] | No | -- | Up to 19 other matching versions, shown in ranked order for user selection |
+| confirmed | boolean | No | `false` | Use true only after explicit conversational approval of this exact `bookDetails`; preserves that choice rather than substituting a different recommendation |
 | outputDir | string | No | `"./downloads"` | Directory to save the file to |
 | process_for_rag | boolean | No | -- | Whether to process the document content for RAG after download |
 | processed_output_format | string | No | -- | Desired output format for RAG processing (e.g., `"text"`, `"markdown"`) |
 
 **Returns:** JSON object with `file_path` (downloaded file path). If RAG processing was requested, the response also includes `processed_file_path` (body text), `metadata_file_path`, optional `footnotes_file_path` / `endnotes_file_path` / `citations_file_path`, `content_types_produced`, `stats`, and `output_files`.
+
+Before approval, clients without form support receive `{ "status": "confirmation_required", "candidates": [...], "message": "..." }`. Ask the user which version they want and retry with that exact `bookDetails` and `confirmed=true`. Declining or closing the form returns `status="cancelled"`. Neither response contains a downloaded file. This approval requirement also applies to single-book downloads.
+
+Books from optional MCP backends use the same confirmation flow. They download in
+a private workspace, validate the returned path, file size and MD5 (when present),
+then publish atomically to a unique filename. They never overwrite an existing
+file. The optional backend file limit is 512 MiB. `process_for_rag` runs the same
+local processing pipeline after publication. Metadata-only discovery records lack
+a supported download identifier and must not be passed as downloadable versions.
 
 **Example Usage:**
 

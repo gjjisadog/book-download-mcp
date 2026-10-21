@@ -121,6 +121,64 @@ flowchart LR
 
 For complete parameter documentation, types, and examples, see [API Reference](docs/api.md).
 
+### Comparing versions and confirming downloads
+
+`search_multi_source` now defaults to `source="all"`: it searches LibGen and all
+configured sources (Z-Library with account credentials, Anna's Archive with a key)
+in parallel. A failed source is reported in `sources_unavailable` without hiding
+healthy results. `source="auto"` keeps the previous Anna/LibGen fallback behavior;
+`zlibrary`, `annas`, `libgen`, `libgen_mcp`, and `find_a_book` select a specific source/backend.
+
+Two optional MCP backends are installed by a normal `npm install` / `npm ci`:
+
+| Source value | Upstream dependency | Integration |
+|---|---|---|
+| `libgen_mcp` | [jmrplens/libgen-mcp](https://github.com/jmrplens/libgen-mcp), `@jmrp.io/libgen-mcp@2.2.1` (MIT) | LibGen and open-access discovery; downloads identified by MD5, DOI or ISBN |
+| `find_a_book` | [Xiaochengzi2048/find-a-book-mcp](https://github.com/Xiaochengzi2048/find-a-book-mcp), `find-a-book-mcp@1.7.1` (MIT) | LibGen search and MD5 downloads using its mirror implementation |
+
+These are separate access implementations with overlapping LibGen catalogs, not
+two new independent libraries. Results retain both the backend `source` and the
+catalog/provider `origin`. `source="all"` includes installed backends automatically.
+To select which optional backends participate, set
+`BOOKHARBOR_MCP_SOURCES=libgen_mcp,find_a_book`; an empty value disables both.
+If optional packages were omitted, restore them with `npm install --include=optional`.
+The existing Python LibGen adapter remains available without these packages.
+
+The adapters use the upstream MCP interfaces without copying their code. They
+forward no Z-Library account credentials, account pools or Anna's keys; Z-Library
+authentication stays in Book Download MCP. Network proxy settings (`HTTP_PROXY`,
+`HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, including lowercase forms) are forwarded
+when present in Book Download MCP's environment; clients on restricted networks must
+inherit or explicitly configure those settings. Each request has a deadline and a private
+working directory. Downloads are staged there, validated (including MD5 when
+available), then published without overwriting existing files. The optional
+backend download limit is 512 MiB per file. RAG processing uses the same local
+pipeline after a successful download.
+
+Open-access hits without a supported MD5/DOI/ISBN are returned separately under
+`discovery` as `metadata_only: true`, preserving their reference links without
+claiming they are downloadable. `find_a_book` returns its first search page (up
+to five hits); `count` is an upper bound, not a guaranteed number of matches.
+
+Results prioritize comparable reported quality scores, then reader ratings.
+Different sources' scores are compared only when their maximum scales are supplied;
+otherwise only scores from a common source are comparable. Missing ratings remain
+unknown. These scores are source metadata, not a measured resolution or an
+inspection of the file. File size and format alone do not prove clarity. Always
+check title, author, language, and edition before treating results as alternatives.
+
+Pass the chosen `bookDetails` and up to 19 matching `alternatives` to
+`download_book_to_file`. Clients advertising MCP form elicitation show a version
+selection dialog with source, format, size, language, year, and available scores.
+The user can choose any version or cancel; cancellation never starts a download.
+Without form support, the tool returns `status="confirmation_required"` and ranked
+candidates. Ask the user in conversation, then call again with their exact chosen
+`bookDetails` and `confirmed=true`. Never set this flag without user confirmation.
+This confirmation also applies to single-book downloads. Existing automated callers
+must obtain approval before setting `confirmed=true`.
+
+The two existing tools keep their names; no additional MCP tools are required.
+
 ## Installation
 
 ### Option A: Independent npm package (after first publication)

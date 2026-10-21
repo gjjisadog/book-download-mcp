@@ -284,7 +284,7 @@ describe('Tool Handlers - Extended Coverage', () => {
       const { toolRegistry } = await setupWithMocks({ searchMultiSource: mockMulti });
 
       const handler = toolRegistry.search_multi_source.handler;
-      const args = { query: 'test' };
+      const args = { query: 'test', source: 'libgen' };
       const validatedArgs = toolRegistry.search_multi_source.schema.parse(args);
       const response = await handler(validatedArgs);
 
@@ -429,7 +429,7 @@ describe('Tool Handlers - Extended Coverage', () => {
       const { toolRegistry } = await setupWithMocks({ searchMultiSource: mockMulti });
 
       const handler = toolRegistry.search_multi_source.handler;
-      const args = { query: 'test' };
+      const args = { query: 'test', source: 'libgen' };
       const validatedArgs = toolRegistry.search_multi_source.schema.parse(args);
       const response = await handler(validatedArgs);
 

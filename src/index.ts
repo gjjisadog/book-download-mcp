@@ -11,10 +11,18 @@ import { fileURLToPath } from 'url';
 // Import SDK components using ESM syntax
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 
 // Import API handlers
 import * as zlibraryApi from './lib/zlibrary-api.js';
 import { logger } from './lib/logger.js';
+import { rankBookCandidates, selectDownload } from './lib/book-selection.js';
+import {
+  enabledExternalSources,
+  isExternalSource,
+  searchExternalSource,
+  downloadExternalSource,
+} from './lib/external-sources.js';
 
 // Recreate __dirname for ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -86,7 +94,20 @@ const DownloadBookToFileParamsSchema = z.object({
   bookDetails: z
     .object({})
     .loose()
-    .describe('The full book details object obtained from search_books'),
+    .describe('The full selected book object from search_books or search_multi_source'),
+  alternatives: z
+    .array(z.object({}).loose())
+    .max(19)
+    .optional()
+    .describe(
+      'Other matching versions to compare and show in the confirmation dialog (up to 19). Include available alternatives from multi-source search.',
+    ),
+  confirmed: z
+    .boolean()
+    .optional()
+    .describe(
+      'Set true only after the user explicitly confirmed this exact bookDetails in conversation. Otherwise request an interactive version selection before downloading.',
+    ),
   outputDir: z
     .string()
     .optional()
@@ -155,13 +176,20 @@ const SearchAdvancedParamsSchema = z.object({
 const SearchMultiSourceParamsSchema = z.object({
   query: z.string().describe('Search query'),
   source: z
-    .enum(['auto', 'annas', 'libgen'])
+    .enum(['all', 'auto', 'zlibrary', 'annas', 'libgen', 'libgen_mcp', 'find_a_book'])
     .optional()
-    .default('auto')
+    .default('all')
     .describe(
-      "Source selection: auto (Anna's Archive if key available, else LibGen), annas (force Anna's Archive), or libgen (force LibGen)",
+      "all (default): compare all configured sources/backends in parallel; auto: Anna's Archive with LibGen fallback; or force zlibrary, annas, libgen, libgen_mcp (@jmrp.io/libgen-mcp), find_a_book (find-a-book-mcp)",
     ),
-  count: z.number().int().optional().default(10).describe('Maximum number of results to return'),
+  count: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .optional()
+    .default(10)
+    .describe('Maximum number of ranked results to return'),
 });
 
 // ============================================================================
@@ -263,14 +291,14 @@ interface HandlerMap {
   fullTextSearch: (args: any) => Promise<any>;
   getDownloadHistory: (args: any) => Promise<any>;
   getDownloadLimits: (args: any) => Promise<any>;
-  downloadBookToFile: (args: any) => Promise<any>;
+  downloadBookToFile: (args: any, server?: Server, signal?: AbortSignal) => Promise<any>;
   processDocumentForRag: (args: any) => Promise<any>;
   getBookMetadata: (args: any) => Promise<any>;
   searchByTerm: (args: any) => Promise<any>;
   searchByAuthor: (args: any) => Promise<any>;
   fetchBooklist: (args: any) => Promise<any>;
   searchAdvanced: (args: any) => Promise<any>;
-  searchMultiSource: (args: any) => Promise<any>;
+  searchMultiSource: (args: any, signal?: AbortSignal) => Promise<any>;
 }
 
 const handlers: HandlerMap = {
@@ -334,9 +362,24 @@ const handlers: HandlerMap = {
     }
   },
 
-  downloadBookToFile: async (args: z.infer<typeof DownloadBookToFileParamsSchema>) => {
+  downloadBookToFile: async (
+    args: z.infer<typeof DownloadBookToFileParamsSchema>,
+    server?: Server,
+    signal?: AbortSignal,
+  ) => {
     try {
-      return await zlibraryApi.downloadBookToFile(args);
+      const selection = await selectDownload(args, server, signal);
+      if (!selection.book) return selection;
+      if (isExternalSource(selection.book.source)) {
+        const result = await downloadExternalSource(selection.book, args.outputDir, signal);
+        if (!args.process_for_rag) return result;
+        const processed = await zlibraryApi.processDocumentForRag({
+          filePath: result.file_path,
+          outputFormat: args.processed_output_format,
+        });
+        return { ...result, ...processed, file_path: result.file_path };
+      }
+      return await zlibraryApi.downloadBookToFile({ ...args, bookDetails: selection.book });
     } catch (error: any) {
       return { error: { message: error.message || 'Failed to download book' } };
     }
@@ -419,13 +462,85 @@ const handlers: HandlerMap = {
     }
   },
 
-  searchMultiSource: async (args: z.infer<typeof SearchMultiSourceParamsSchema>) => {
+  searchMultiSource: async (
+    args: z.infer<typeof SearchMultiSourceParamsSchema>,
+    signal?: AbortSignal,
+  ) => {
     try {
-      return await zlibraryApi.searchMultiSource({
-        query: args.query,
-        source: args.source,
-        count: args.count,
+      if (isExternalSource(args.source)) {
+        const result = await searchExternalSource(args.source, args.query, args.count, signal);
+        return { ...result, books: rankBookCandidates(result.books), sources_used: [args.source] };
+      }
+      if (args.source !== 'all' && args.source !== 'zlibrary') {
+        const result = await zlibraryApi.searchMultiSource({ ...args, source: args.source });
+        return Array.isArray(result?.books)
+          ? { ...result, books: rankBookCandidates(result.books) }
+          : result;
+      }
+      const sources: { name: string; run: () => Promise<any> }[] = [];
+      if (
+        args.source === 'zlibrary' ||
+        process.env.ZLIBRARY_ACCOUNTS ||
+        (process.env.ZLIBRARY_EMAIL && process.env.ZLIBRARY_PASSWORD)
+      )
+        sources.push({
+          name: 'zlibrary',
+          run: () => zlibraryApi.searchBooks({ query: args.query, count: args.count }),
+        });
+      if (args.source === 'all') {
+        if (process.env.ANNAS_SECRET_KEY)
+          sources.push({
+            name: 'annas',
+            run: () => zlibraryApi.searchMultiSource({ ...args, source: 'annas' }),
+          });
+        sources.push({
+          name: 'libgen',
+          run: () => zlibraryApi.searchMultiSource({ ...args, source: 'libgen' }),
+        });
+        for (const source of enabledExternalSources())
+          sources.push({
+            name: source,
+            run: () => searchExternalSource(source, args.query, args.count, signal),
+          });
+      }
+      const results = await Promise.allSettled(sources.map((source) => source.run()));
+      const books: Record<string, any>[] = [];
+      const discovery: Record<string, any>[] = [];
+      const unavailable: string[] = [];
+      results.forEach((result, index) => {
+        const name = sources[index]!.name;
+        if (result.status === 'rejected' || !Array.isArray(result.value?.books)) {
+          unavailable.push(name);
+          return;
+        }
+        books.push(
+          ...result.value.books.map((book: Record<string, any>) => ({
+            ...book,
+            source: book.source || name,
+          })),
+        );
+        if (Array.isArray(result.value.discovery)) discovery.push(...result.value.discovery);
       });
+      if (unavailable.length === sources.length)
+        throw new Error('All configured book sources failed');
+      // A provider's fallback can return the same LibGen hit as the direct search.
+      const seen = new Set<string>();
+      const uniqueBooks = books.filter((book) => {
+        const id = book.md5 || book.id;
+        if (!id) return true;
+        const key = `${book.source}:${id}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      return {
+        books: rankBookCandidates(uniqueBooks).slice(0, args.count),
+        sources_used: [...new Set(books.map((book) => book.source))],
+        sources_unavailable: unavailable,
+        discovery,
+        selection_note:
+          'Reported quality first, reader rating second; actual clarity is unverified. Review title, author, language and edition. Pass matching alternatives to download_book_to_file for user confirmation.',
+      };
     } catch (error: any) {
       return { error: { message: error.message || 'Failed to search multi-source' } };
     }
@@ -466,7 +581,7 @@ const toolRegistry: Record<string, ToolRegistryEntry> = {
   get_recent_books: { description: 'Get recently added books', schema: GetRecentBooksParamsSchema },
   download_book_to_file: {
     description:
-      'Download a book to file and optionally return a processed RAG bundle with body text, metadata, and optional sibling outputs.',
+      'Compare matching versions and request user confirmation before downloading. Pass alternatives from multi-source search. Unsupported clients receive confirmation_required; ask the user before setting confirmed=true. Optionally produce a RAG bundle.',
     schema: DownloadBookToFileParamsSchema,
     handler: handlers.downloadBookToFile,
   },
@@ -694,11 +809,14 @@ async function start(
     // 6. download_book_to_file
     registerTool(
       'download_book_to_file',
-      'Download a book to a local file. Pass the full bookDetails object from search_books results. Optionally process the document for RAG (text extraction) after download. Returns file paths for both the original book and processed text.',
+      toolRegistry.download_book_to_file!.description,
       DownloadBookToFileParamsSchema.shape,
       ann('download_book_to_file'),
-      async (args) =>
-        wrapResult(await handlers.downloadBookToFile(args as any), 'download_book_to_file'),
+      async (args, extra) =>
+        wrapResult(
+          await handlers.downloadBookToFile(args as any, server.server, extra.signal),
+          'download_book_to_file',
+        ),
     );
 
     // 7. process_document_for_rag
@@ -759,11 +877,14 @@ async function start(
     // 13. search_multi_source
     registerTool(
       'search_multi_source',
-      "Search for books across Anna's Archive and LibGen. Alternative to Z-Library EAPI. Returns books with md5, title, author, year, extension, size, source, download_url. Use source=auto to prefer Anna's Archive with LibGen fallback, or force a specific source.",
+      'Compare all configured book sources and optional libgen_mcp / find_a_book backends in parallel (default source=all). Rank comparable reported quality, then reader ratings; actual clarity stays unknown. Pass matching versions to download_book_to_file for user confirmation. discovery contains metadata-only records, not downloadable books. source=auto retains Anna/LibGen fallback behavior.',
       SearchMultiSourceParamsSchema.shape,
       ann('search_multi_source'),
-      async (args) =>
-        wrapResult(await handlers.searchMultiSource(args as any), 'search_multi_source'),
+      async (args, extra) =>
+        wrapResult(
+          await handlers.searchMultiSource(args as any, extra.signal),
+          'search_multi_source',
+        ),
     );
 
     // Create and connect the Stdio transport
