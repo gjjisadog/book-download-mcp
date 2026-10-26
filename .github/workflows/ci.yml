@@ -115,7 +115,7 @@ jobs:
           echo "OK: Tarball size within limit ($SIZE bytes)"
           echo "Contents:"
           tar tzf "$TARBALL"
-          EXCLUDED=$(tar tzf "$TARBALL" | grep -E '/\.env$|\.test\.|\.spec\.|__tests__|\.pyc$' || true)
+          EXCLUDED=$(tar tzf "$TARBALL" | grep -E '/\.env($|[./]|rc$)|\.test\.|\.spec\.|__tests__|\.pyc$' || true)
           if [ -n "$EXCLUDED" ]; then
             echo "ERROR: Tarball contains excluded patterns:"
             echo "$EXCLUDED"

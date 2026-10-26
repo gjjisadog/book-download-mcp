@@ -11,7 +11,60 @@ permissions:
   packages: write
 
 jobs:
+  publish-github:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: astral-sh/setup-uv@v7
+      - name: Verify release version and notes
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          test "$GITHUB_REF_NAME" = "v$VERSION"
+          test -f "docs/releases/$GITHUB_REF_NAME.md"
+      - run: npm ci
+      - run: uv sync --frozen --python 3.12
+      - run: npm run build
+      - name: Test installation package sources
+        run: |
+          node --experimental-vm-modules node_modules/jest/bin/jest.js
+          uv run pytest -m "not slow and not integration" --benchmark-disable
+      - name: Build installation package
+        shell: bash
+        run: |
+          mkdir -p release
+          npm pack --pack-destination release --json > pack-result.json
+          ARCHIVE=$(node -p "require('./pack-result.json')[0].filename")
+          VERSION=$(node -p "require('./package.json').version")
+          mv "release/$ARCHIVE" "release/book-download-mcp-$VERSION.tgz"
+          cp INSTALL.md release/INSTALL.md
+          if tar tzf "release/book-download-mcp-$VERSION.tgz" | grep -E '/\.env($|[./]|rc$)|\.test\.|\.spec\.|__tests__|\.pyc$'; then
+            echo "ERROR: installation package contains excluded files"
+            exit 1
+          fi
+      - name: Checksum installation files
+        working-directory: release
+        run: sha256sum *.tgz INSTALL.md > SHA256SUMS
+      - name: Publish GitHub installation package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          release/*.tgz release/INSTALL.md release/SHA256SUMS
+          --verify-tag --latest
+          --title "Book Download MCP $GITHUB_REF_NAME"
+          --notes-file "docs/releases/$GITHUB_REF_NAME.md"
+
   publish-npm:
+    if: vars.NPM_PUBLISH_ENABLED == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

@@ -16,7 +16,7 @@ For what this project is — and deliberately isn't — see [VISION.md](VISION.m
 
 ## Quick Start
 
-**Prerequisites:** Node.js 22+, Python 3.10+, and [UV](https://docs.astral.sh/uv/)
+**Prerequisites:** Node.js 22+, Python 3.11+, and [UV](https://docs.astral.sh/uv/)
 (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 
 ```bash
@@ -121,7 +121,7 @@ flowchart LR
 
 For complete parameter documentation, types, and examples, see [API Reference](docs/api.md).
 
-### Comparing versions and confirming downloads
+## Comparing versions and confirming downloads
 
 `search_multi_source` now defaults to `source="all"`: it searches LibGen and all
 configured sources (Z-Library with account credentials, Anna's Archive with a key)
@@ -181,12 +181,20 @@ The two existing tools keep their names; no additional MCP tools are required.
 
 ## Installation
 
+### Released installation package
+
+Download the compiled `.tgz` archive and checksum file from
+[GitHub Releases](https://github.com/gjjisadog/book-download-mcp/releases/latest).
+Follow [INSTALL.md](INSTALL.md) to install it with npm, set up Python with UV,
+and connect your MCP client. This installation route does not require an npm
+account or an npm registry publication.
+
 ### Option A: Independent npm package (after first publication)
 
 The independent package identity is `@gjjisadog/zlibrary-mcp`, version `1.4.1`.
 Until its first npm release is available, use the source installation below.
 
-**Prerequisites:** Node.js 22+, Python 3.10+, [UV](https://docs.astral.sh/uv/)
+**Prerequisites:** Node.js 22+, Python 3.11+, [UV](https://docs.astral.sh/uv/)
 
 ```bash
 npm install -g @gjjisadog/zlibrary-mcp
@@ -200,7 +208,7 @@ vendor library and locked dependencies. Release setup is described in
 
 ### Option B: From Source (for development)
 
-**Prerequisites:** Node.js 22+, Python 3.10+, [UV](https://docs.astral.sh/uv/)
+**Prerequisites:** Node.js 22+, Python 3.11+, [UV](https://docs.astral.sh/uv/)
 
 ```bash
 # 1. Install UV (one-time, if not already installed)
